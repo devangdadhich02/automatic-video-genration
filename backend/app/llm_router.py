@@ -21,19 +21,37 @@ def _openai_client(*, provider: str):
     # Provider mapping:
     # - openai: OpenAI directly
     # - openrouter: OpenAI-compatible API via OpenRouter
+    # - farai: OpenAI-compatible API via Far.ai
     if provider == "openrouter":
         if not settings.OPENROUTER_API_KEY:
             raise RuntimeError("OPENROUTER_API_KEY missing")
-        return OpenAI(api_key=settings.OPENROUTER_API_KEY, base_url="https://openrouter.ai/api/v1")
+        return OpenAI(
+            api_key=settings.OPENROUTER_API_KEY,
+            base_url="https://openrouter.ai/api/v1",
+            timeout=settings.OPENAI_TIMEOUT_SECONDS,
+        )
+
+    if provider == "farai":
+        if not settings.FARAI_API_KEY:
+            raise RuntimeError("FARAI_API_KEY missing")
+        return OpenAI(
+            api_key=settings.FARAI_API_KEY,
+            base_url=settings.FARAI_BASE_URL,
+            timeout=settings.OPENAI_TIMEOUT_SECONDS,
+        )
 
     # default: OpenAI
     if not settings.OPENAI_API_KEY:
         raise RuntimeError("OPENAI_API_KEY missing")
 
     if settings.OPENAI_BASE_URL:
-        return OpenAI(api_key=settings.OPENAI_API_KEY, base_url=settings.OPENAI_BASE_URL)
+        return OpenAI(
+            api_key=settings.OPENAI_API_KEY,
+            base_url=settings.OPENAI_BASE_URL,
+            timeout=settings.OPENAI_TIMEOUT_SECONDS,
+        )
 
-    return OpenAI(api_key=settings.OPENAI_API_KEY)
+    return OpenAI(api_key=settings.OPENAI_API_KEY, timeout=settings.OPENAI_TIMEOUT_SECONDS)
 
 
 def chat(
@@ -68,6 +86,8 @@ def safe_provider_and_model(ai_provider: str | None, ai_model: str | None) -> Tu
         provider = "openai"
     if provider in {"openrouter", "openrouter.ai"}:
         provider = "openrouter"
+    if provider in {"far", "farai", "far.ai"}:
+        provider = "farai"
     if provider in {"claude", "gemini"}:
         # Prefer OpenRouter for non-OpenAI models unless user configured a base_url.
         if settings.OPENROUTER_API_KEY:

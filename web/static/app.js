@@ -43,6 +43,7 @@
   const rawSubTopicInput = document.getElementById('raw-sub-topic');
   const rawChannelInput = document.getElementById('raw-channel');
   const rawTextInput = document.getElementById('raw-text');
+  const rawPdfInput = document.getElementById('raw-pdf');
   const rawWebUrlInput = document.getElementById('raw-web-url');
   const rawYoutubeUrlInput = document.getElementById('raw-youtube-url');
   const rawChannelLinkInput = document.getElementById('raw-channel-link');
@@ -62,6 +63,11 @@
   const genPromptVersionInput = document.getElementById('gen-prompt-version');
   const genTotalCharsInput = document.getElementById('gen-total-chars');
   const genStepsInput = document.getElementById('gen-steps');
+  const contentConfigInput = document.getElementById('content-config');
+  const saveConfigBtn = document.getElementById('save-config');
+  const exportDocxBtn = document.getElementById('export-docx');
+  const exportPdfBtn = document.getElementById('export-pdf');
+  const configResult = document.getElementById('config-result');
 
   const refreshStoryTypesBtn = document.getElementById('refresh-story-types');
   const storyTypesList = document.getElementById('story-types-list');
@@ -123,6 +129,12 @@
   async function loadContent(contentId) {
     const { json } = await fetchJson(`${BACKEND_BASE}/v2/contents/${contentId}`);
     contentResult.textContent = JSON.stringify(json, null, 2);
+    try {
+      if (contentConfigInput) {
+        const cfg = json.config_json || {};
+        contentConfigInput.value = Object.keys(cfg).length ? JSON.stringify(cfg, null, 2) : '';
+      }
+    } catch {}
     return json;
   }
 
@@ -147,6 +159,29 @@
     rawResult.textContent = JSON.stringify(json, null, 2);
     if (ok && json.content_id) {
       contentIdInput.value = json.content_id;
+
+      // Optional: PDF upload as an additional input source
+      try {
+        const file = rawPdfInput?.files?.[0] || null;
+        if (file) {
+          rawResult.textContent = 'Uploading PDF...';
+          const fd = new FormData();
+          fd.append('file', file, file.name);
+          const res = await fetch(`${BACKEND_BASE}/v2/content/${json.content_id}/upload/pdf`, {
+            method: 'POST',
+            body: fd
+          });
+          const txt = await res.text();
+          let pdfJson = { raw: txt };
+          try {
+            pdfJson = JSON.parse(txt);
+          } catch {}
+          rawResult.textContent = JSON.stringify({ created: json, pdf_upload: pdfJson }, null, 2);
+        }
+      } catch (e) {
+        rawResult.textContent = JSON.stringify({ created: json, pdf_upload_error: String(e?.message || e) }, null, 2);
+      }
+
       await loadContent(json.content_id);
     }
   }
@@ -248,6 +283,35 @@
     } catch {
       return {};
     }
+  }
+
+  async function saveConfig() {
+    const contentId = contentIdInput.value.trim();
+    if (!contentId) return;
+    if (!configResult) return;
+    configResult.textContent = 'Saving config...';
+    const body = { config: safeJsonParse(contentConfigInput?.value || '') };
+    const { json } = await fetchJson(`${BACKEND_BASE}/v2/contents/${contentId}/config`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    configResult.textContent = JSON.stringify(json, null, 2);
+    await loadContent(contentId);
+  }
+
+  async function exportFormats(formats) {
+    const contentId = contentIdInput.value.trim();
+    if (!contentId) return;
+    if (!configResult) return;
+    configResult.textContent = 'Exporting...';
+    const { json } = await fetchJson(`${BACKEND_BASE}/v2/contents/${contentId}/export`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ formats })
+    });
+    configResult.textContent = JSON.stringify(json, null, 2);
+    await loadContent(contentId);
   }
 
   async function saveStoryType() {
@@ -563,6 +627,9 @@
   if (saveStepPromptBtn) saveStepPromptBtn.addEventListener('click', saveStepPrompt);
   if (refreshExamplesBtn) refreshExamplesBtn.addEventListener('click', refreshExamples);
   if (saveExampleBtn) saveExampleBtn.addEventListener('click', saveExample);
+  if (saveConfigBtn) saveConfigBtn.addEventListener('click', saveConfig);
+  if (exportDocxBtn) exportDocxBtn.addEventListener('click', () => exportFormats(['docx']));
+  if (exportPdfBtn) exportPdfBtn.addEventListener('click', () => exportFormats(['pdf']));
 
   // Initial session check
   checkSession();

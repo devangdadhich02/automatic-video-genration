@@ -19,6 +19,9 @@ class Settings:
     # OpenAI-compatible provider (OpenRouter etc.)
     OPENAI_BASE_URL: str | None = os.getenv("OPENAI_BASE_URL")
     OPENROUTER_API_KEY: str | None = os.getenv("OPENROUTER_API_KEY")
+    # Optional: Far.ai (OpenAI-compatible). If you use this provider, configure both.
+    FARAI_API_KEY: str | None = os.getenv("FARAI_API_KEY")
+    FARAI_BASE_URL: str = os.getenv("FARAI_BASE_URL", "https://api.far.ai/v1")
     # Recommended default: fast + high quality.
     # Note: "gpt-5.2-mini" / "gpt-5.1-mini" are not valid model ids in your models list.
     OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-5-mini")
@@ -57,6 +60,13 @@ class Settings:
     GOOGLE_SHEETS_ID: str | None = os.getenv("GOOGLE_SHEETS_ID")
     # Service account json file path (recommended) OR raw JSON string.
     GOOGLE_SERVICE_ACCOUNT_JSON: str | None = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON")
+
+    # YouTube bulk transcript extraction (channel_link)
+    YOUTUBE_CHANNEL_MAX_VIDEOS: int = int(os.getenv("YOUTUBE_CHANNEL_MAX_VIDEOS", "5"))
+    YOUTUBE_TRANSCRIPT_LANGS: str = os.getenv("YOUTUBE_TRANSCRIPT_LANGS", "en,en-US,en-GB")
+
+    # Exports
+    EXPORTS_DIR: str = os.path.join(OUTPUT_DIR, "exports")
 
 
 settings = Settings()

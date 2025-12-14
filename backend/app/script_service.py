@@ -300,7 +300,7 @@ class ScriptService:
         # Model fallback strategy:
         # - If the configured model doesn't exist / no access, try a couple of known-fast, widely available models.
         # NOTE: `gpt-5.2-mini` is NOT a valid model id (there is `gpt-5-mini`).
-        model_candidates = [self.model, "gpt-5.2-mini", "gpt-4o-mini"]
+        model_candidates = [self.model, "gpt-5-mini", "gpt-4o-mini"]
         seen = set()
         model_candidates = [m for m in model_candidates if m and not (m in seen or seen.add(m))]
 

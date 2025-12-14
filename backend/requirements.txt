@@ -18,3 +18,7 @@ trafilatura
 beautifulsoup4
 gspread
 google-auth
+python-docx
+fpdf2
+yt-dlp
+pypdf

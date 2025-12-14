@@ -81,6 +81,7 @@
               <input id="raw-sub-topic" placeholder="sub_topic (optional)" />
               <input id="raw-channel" placeholder="channel (optional)" />
               <textarea id="raw-text" placeholder="Long original text (optional, up to 30,000+ chars)"></textarea>
+              <input id="raw-pdf" type="file" accept="application/pdf" />
               <input id="raw-web-url" placeholder="Web URL (optional)" />
               <input id="raw-youtube-url" placeholder="YouTube URL (optional)" />
               <input id="raw-channel-link" placeholder="YouTube channel link (optional)" />
@@ -108,6 +109,20 @@
                   <input id="gen-total-chars" type="number" min="100" value="30000" />
                   <input id="gen-steps" type="number" min="5" max="20" placeholder="steps (optional)" />
                 </div>
+              </details>
+
+              <details>
+                <summary>Config (stored in config_json column)</summary>
+                <textarea
+                  id="content-config"
+                  placeholder='JSON config. Example: {"retry_count":2,"max_tokens_per_step":2500,"mark_key_terms":true}'
+                ></textarea>
+                <div class="row3">
+                  <button id="save-config">Save config</button>
+                  <button id="export-docx">Export DOCX</button>
+                  <button id="export-pdf">Export PDF</button>
+                </div>
+                <pre id="config-result"></pre>
               </details>
 
               <pre id="job-result"></pre>

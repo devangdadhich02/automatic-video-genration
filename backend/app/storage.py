@@ -154,6 +154,21 @@ def init_db() -> None:
             """
         )
 
+        # Channel DNA store (training ingredient). Kept separate from `contents` rows.
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS channel_dna (
+              channel TEXT NOT NULL,
+              story_type TEXT,
+              version INTEGER NOT NULL DEFAULT 1,
+              dna_json TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              PRIMARY KEY (channel, story_type)
+            )
+            """
+        )
+
         conn.commit()
 
 
@@ -423,3 +438,75 @@ def list_examples(*, type_id: str | None = None, channel: str | None = None, lim
     with _connect() as conn:
         rows = conn.execute(q, args).fetchall()
         return [dict(r) for r in rows]
+
+
+def upsert_channel_dna(*, channel: str, story_type: str | None, version: int, dna: Dict[str, Any]) -> None:
+    init_db()
+    now = _utc_now_iso()
+    with _connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO channel_dna (channel, story_type, version, dna_json, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(channel, story_type) DO UPDATE SET
+              version=excluded.version,
+              dna_json=excluded.dna_json,
+              updated_at=excluded.updated_at
+            """,
+            (
+                channel,
+                story_type,
+                int(version),
+                json.dumps(dna or {}, ensure_ascii=False),
+                now,
+                now,
+            ),
+        )
+        conn.commit()
+
+
+def get_channel_dna(channel: str, story_type: str | None = None) -> Optional[Dict[str, Any]]:
+    init_db()
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM channel_dna WHERE channel = ? AND story_type IS ?",
+            (channel, story_type),
+        ).fetchone()
+        if not row:
+            return None
+        d = dict(row)
+        if d.get("dna_json"):
+            try:
+                d["dna_json"] = json.loads(d["dna_json"])
+            except Exception:
+                pass
+        return d
+
+
+def list_channel_dna(*, channel: str | None = None, story_type: str | None = None, limit: int = 100) -> List[Dict[str, Any]]:
+    init_db()
+    q = "SELECT * FROM channel_dna"
+    args: List[Any] = []
+    where: List[str] = []
+    if channel:
+        where.append("channel = ?")
+        args.append(channel)
+    if story_type is not None:
+        where.append("story_type IS ?")
+        args.append(story_type)
+    if where:
+        q += " WHERE " + " AND ".join(where)
+    q += " ORDER BY updated_at DESC LIMIT ?"
+    args.append(int(limit))
+    with _connect() as conn:
+        rows = conn.execute(q, args).fetchall()
+        out: List[Dict[str, Any]] = []
+        for r in rows:
+            d = dict(r)
+            if d.get("dna_json"):
+                try:
+                    d["dna_json"] = json.loads(d["dna_json"])
+                except Exception:
+                    pass
+            out.append(d)
+        return out

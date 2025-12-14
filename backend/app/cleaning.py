@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass
 from typing import List, Optional, Sequence, Tuple
 
 import httpx
+
+from .config import settings
 
 
 @dataclass
@@ -185,6 +188,77 @@ async def extract_youtube_transcript(url_or_id: str, *, prefer_langs: Sequence[s
         return ""
 
 
+async def extract_youtube_channel_transcripts(
+    channel_url: str,
+    *,
+    max_videos: int = 5,
+    prefer_langs: Sequence[str] = ("en", "en-US", "en-GB"),
+    timeout: float = 45.0,
+) -> str:
+    """Best-effort bulk transcript extraction for a YouTube channel link.
+
+    Implementation strategy:
+    - Prefer `yt-dlp` python module (fast + robust) to list latest videos.
+    - Then pull transcript per video via `youtube-transcript-api`.
+    - If `yt-dlp` is unavailable, we skip (non-blocking).
+    """
+
+    url = (channel_url or "").strip()
+    if not url or max_videos <= 0:
+        return ""
+
+    # Optional dependency
+    try:
+        import yt_dlp  # type: ignore
+    except Exception:
+        return ""
+
+    # yt-dlp: extract flat list of entries
+    ydl_opts = {
+        "quiet": True,
+        "skip_download": True,
+        "extract_flat": True,
+        "playlistend": int(max_videos),
+    }
+
+    entries: List[str] = []
+    try:
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:  # type: ignore[attr-defined]
+            info = ydl.extract_info(url, download=False)
+        raw_entries = []
+        if isinstance(info, dict):
+            raw_entries = info.get("entries") or []
+        for e in raw_entries:
+            if not isinstance(e, dict):
+                continue
+            vid = e.get("id")
+            if isinstance(vid, str) and re.fullmatch(r"[A-Za-z0-9_-]{11}", vid):
+                entries.append(vid)
+        entries = entries[: int(max_videos)]
+    except Exception:
+        return ""
+
+    if not entries:
+        return ""
+
+    async def one(vid: str) -> str:
+        # Re-use existing single-video extractor
+        return await extract_youtube_transcript(vid, prefer_langs=prefer_langs)
+
+    # Limit concurrency to avoid rate limits
+    out: List[str] = []
+    batch_size = 3
+    for i in range(0, len(entries), batch_size):
+        batch = entries[i : i + batch_size]
+        texts = await asyncio.gather(*[one(v) for v in batch], return_exceptions=True)
+        for t in texts:
+            if isinstance(t, str) and t.strip():
+                out.append(t.strip())
+
+    joined = "\n\n".join(out).strip()
+    return _collapse_spaces(joined)
+
+
 async def clean_and_merge(inputs: CleanInputs) -> Tuple[str, str, List[str]]:
     """Return (merged_text, cleaned_text, sources_used)."""
 
@@ -214,6 +288,17 @@ async def clean_and_merge(inputs: CleanInputs) -> Tuple[str, str, List[str]]:
     # If yt-dlp is installed, you can extend this to pull last N videos.
     if inputs.channel_link and inputs.channel_link.strip():
         sources.append("channel_link")
+        try:
+            langs = [x.strip() for x in (settings.YOUTUBE_TRANSCRIPT_LANGS or "").split(",") if x.strip()]
+            ch_text = await extract_youtube_channel_transcripts(
+                inputs.channel_link.strip(),
+                max_videos=int(getattr(settings, "YOUTUBE_CHANNEL_MAX_VIDEOS", 5)),
+                prefer_langs=tuple(langs) if langs else ("en", "en-US", "en-GB"),
+            )
+        except Exception:
+            ch_text = ""
+        if ch_text:
+            pieces.append(ch_text)
 
     merged = "\n\n".join([p for p in pieces if p and p.strip()]).strip()
     merged = _collapse_spaces(merged)
