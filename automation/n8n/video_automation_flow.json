@@ -1,0 +1,97 @@
+{
+  "name": "Video Automation - 1h Longform + Shorts",
+  "nodes": [
+    {
+      "id": "1",
+      "name": "Manual Trigger / Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "parameters": {
+        "path": "video-automation-trigger",
+        "httpMethod": "POST",
+        "responseMode": "onReceived"
+      }
+    },
+    {
+      "id": "2",
+      "name": "Generate Script (Backend)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [550, 300],
+      "parameters": {
+        "url": "http://backend:8000/generate/script",
+        "method": "POST",
+        "jsonParameters": true,
+        "options": {},
+        "bodyParametersJson": "={\"outline\": $json[\"outline\"], \"query\": $json[\"query\"]}"
+      }
+    },
+    {
+      "id": "3",
+      "name": "Generate Videos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [850, 300],
+      "parameters": {
+        "url": "http://backend:8000/generate/video",
+        "method": "POST",
+        "jsonParameters": true,
+        "bodyParametersJson": "={\"script\": $json[\"script\"]}"
+      }
+    },
+    {
+      "id": "4",
+      "name": "SNS Webhook (PowerAutomate)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [1150, 300],
+      "parameters": {
+        "url": "={{$json[\"sns_webhook_url\"]}}",
+        "method": "POST",
+        "jsonParameters": true,
+        "bodyParametersJson": "={\"title\": $json[\"title\"], \"text\": $json[\"script\"], \"long_video_url\": $json[\"long\"], \"short_video_url\": $json[\"short\"]}"
+      }
+    }
+  ],
+  "connections": {
+    "Manual Trigger / Webhook": {
+      "main": [
+        [
+          {
+            "node": "Generate Script (Backend)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Script (Backend)": {
+      "main": [
+        [
+          {
+            "node": "Generate Videos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Videos": {
+      "main": [
+        [
+          {
+            "node": "SNS Webhook (PowerAutomate)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {},
+  "pinData": {},
+  "tags": ["video", "automation", "sns"]
+}
+
+

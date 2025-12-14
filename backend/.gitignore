@@ -1,0 +1,20 @@
+# Python / virtualenv
+/.venv/
+/venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Local config
+.env
+
+# Generated assets / outputs
+/outputs/
+/assets/
+
+# Local data (sqlite/chroma etc.)
+/data/
+*.sqlite3
+
+# Logs
+*.log
