@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Video Automation Dashboard</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="styles.css" />
+    <!-- Supabase JS from CDN -->
+    <script src="https://unpkg.com/@supabase/supabase-js@2.48.0/dist/umd/supabase.min.js"></script>
+  </head>
+  <body>
+    <div id="app">
+      <header>
+        <h1>Video Automation Control Panel</h1>
+        <p>Manage customers, payments and trigger 1-hour video automations.</p>
+      </header>
+
+      <main>
+        <section id="auth-section">
+          <h2>Sign in</h2>
+          <div id="auth-form">
+            <input id="email" type="email" placeholder="Email" />
+            <button id="login-btn">Send magic link</button>
+            <p id="auth-status"></p>
+          </div>
+        </section>
+
+        <section id="dashboard" class="hidden">
+          <h2>Dashboard</h2>
+          <p id="user-info"></p>
+
+          <div class="grid">
+            <div class="card" id="customers-card">
+              <h3>Customers</h3>
+              <button id="refresh-customers">Refresh</button>
+              <ul id="customers-list"></ul>
+            </div>
+
+            <div class="card" id="create-customer-card">
+              <h3>Create Customer</h3>
+              <input id="cust-name" placeholder="Name" />
+              <input id="cust-email" placeholder="Email" />
+              <button id="create-customer">Create</button>
+              <p class="hint">Customers are stored in Supabase `customers` table.</p>
+            </div>
+
+            <div class="card">
+              <h3>Generate Script</h3>
+              <textarea
+                id="outline"
+                placeholder="Video outline (e.g. 1h trading strategy breakdown)"
+              ></textarea>
+              <div class="row">
+                <input id="language" placeholder="Language (e.g. English, Hindi, Chinese)" />
+                <input id="target-minutes" type="number" min="5" value="60" />
+              </div>
+              <button id="generate-script">Generate script</button>
+              <pre id="script-result"></pre>
+              <p class="hint">Works in Guest Mode (Supabase not required).</p>
+            </div>
+
+            <div class="card">
+              <h3>Trigger Video Pipeline</h3>
+              <input
+                id="sns-webhook-url"
+                placeholder="PowerAutomate webhook URL (optional)"
+              />
+              <button id="trigger-pipeline">Run pipeline</button>
+              <pre id="pipeline-result"></pre>
+              <p class="hint">Requires backend running. Supabase not required for this demo.</p>
+            </div>
+
+            <div class="card">
+              <h3>Long-form System: Create RAW input</h3>
+              <select id="use-case">
+                <option value="TRAINING">TRAINING</option>
+                <option value="GENERATION">GENERATION</option>
+              </select>
+              <input id="raw-domain" placeholder="domain (e.g. stocks, history)" />
+              <input id="raw-topic" placeholder="topic (optional)" />
+              <input id="raw-sub-topic" placeholder="sub_topic (optional)" />
+              <input id="raw-channel" placeholder="channel (optional)" />
+              <textarea id="raw-text" placeholder="Long original text (optional, up to 30,000+ chars)"></textarea>
+              <input id="raw-web-url" placeholder="Web URL (optional)" />
+              <input id="raw-youtube-url" placeholder="YouTube URL (optional)" />
+              <input id="raw-channel-link" placeholder="YouTube channel link (optional)" />
+              <button id="create-raw">Create RAW</button>
+              <pre id="raw-result"></pre>
+              <p class="hint">OR-combination allowed. All items are stored in a single main table (filter by use_case/status).</p>
+            </div>
+
+            <div class="card">
+              <h3>Long-form System: Run pipeline steps</h3>
+              <input id="content-id" placeholder="content_id" />
+              <div class="row3">
+                <button id="run-clean">Clean</button>
+                <button id="run-classify">Classify</button>
+                <button id="run-generate">Generate</button>
+              </div>
+
+              <details>
+                <summary>Generation options</summary>
+                <input id="gen-story-type" placeholder="story_type (optional, else auto)" />
+                <input id="gen-provider" placeholder="ai_provider (openai/openrouter/gpt/claude/gemini)" />
+                <input id="gen-model" placeholder="ai_model (e.g. gpt-4o-mini or openrouter model)" />
+                <input id="gen-prompt-version" placeholder="prompt_version (optional)" />
+                <div class="row">
+                  <input id="gen-total-chars" type="number" min="100" value="30000" />
+                  <input id="gen-steps" type="number" min="5" max="20" placeholder="steps (optional)" />
+                </div>
+              </details>
+
+              <pre id="job-result"></pre>
+              <pre id="content-result"></pre>
+              <p class="hint">Async jobs: the UI polls /v2/jobs/{job_id} and shows outputs once status=OUTPUT.</p>
+            </div>
+
+            <div class="card">
+              <h3>Training DB: Story types</h3>
+              <button id="refresh-story-types">Refresh</button>
+              <ul id="story-types-list"></ul>
+              <input id="st-type-id" placeholder="type_id (e.g. Narrative)" />
+              <input id="st-name" placeholder="name" />
+              <textarea id="st-desc" placeholder="description (optional)"></textarea>
+              <textarea id="st-structure" placeholder='structure JSON (optional)'></textarea>
+              <textarea id="st-rules" placeholder='rules JSON (optional)'></textarea>
+              <button id="save-story-type">Save story type</button>
+              <pre id="story-type-result"></pre>
+            </div>
+
+            <div class="card">
+              <h3>Training DB: Step prompts</h3>
+              <input id="sp-type-id" placeholder="type_id" />
+              <button id="refresh-step-prompts">Load step prompts</button>
+              <ul id="step-prompts-list"></ul>
+              <input id="sp-prompt-id" placeholder="prompt_id" />
+              <input id="sp-step-index" type="number" min="0" placeholder="step_index (0-based)" />
+              <input id="sp-step-name" placeholder="step_name (optional)" />
+              <input id="sp-objective" placeholder="objective (optional)" />
+              <textarea id="sp-prompt-text" placeholder="prompt_text"></textarea>
+              <input id="sp-example-ref" placeholder="example_ref (optional)" />
+              <input id="sp-ratio" placeholder="ratio (optional, e.g. 0.1)" />
+              <button id="save-step-prompt">Save step prompt</button>
+              <pre id="step-prompt-result"></pre>
+            </div>
+
+            <div class="card">
+              <h3>Training DB: Examples (auto-chunk + RAG ingest)</h3>
+              <button id="refresh-examples">Refresh</button>
+              <ul id="examples-list"></ul>
+              <input id="ex-id" placeholder="example_id" />
+              <input id="ex-type-id" placeholder="type_id (optional)" />
+              <input id="ex-channel" placeholder="channel (optional)" />
+              <input id="ex-title" placeholder="title (optional)" />
+              <input id="ex-source-url" placeholder="source_url (optional)" />
+              <textarea id="ex-raw-text" placeholder="example raw_text"></textarea>
+              <button id="save-example">Save example</button>
+              <pre id="example-result"></pre>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer>
+        <small>Backend: FastAPI · Vector DB: Chroma (default) · Video: FFmpeg + Pixabay/Pexels</small>
+      </footer>
+    </div>
+
+    <script src="app.js"></script>
+  </body>
+  </html>
+
+
