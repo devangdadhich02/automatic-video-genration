@@ -64,6 +64,10 @@ class Settings:
     # YouTube bulk transcript extraction (channel_link)
     YOUTUBE_CHANNEL_MAX_VIDEOS: int = int(os.getenv("YOUTUBE_CHANNEL_MAX_VIDEOS", "5"))
     YOUTUBE_TRANSCRIPT_LANGS: str = os.getenv("YOUTUBE_TRANSCRIPT_LANGS", "en,en-US,en-GB")
+    # Timeouts for YouTube extraction (keeps async jobs from hanging)
+    YOUTUBE_OEMBED_TIMEOUT_SECONDS: float = float(os.getenv("YOUTUBE_OEMBED_TIMEOUT_SECONDS", "10"))
+    YOUTUBE_YTDLP_TIMEOUT_SECONDS: float = float(os.getenv("YOUTUBE_YTDLP_TIMEOUT_SECONDS", "25"))
+    YOUTUBE_CAPTION_FETCH_TIMEOUT_SECONDS: float = float(os.getenv("YOUTUBE_CAPTION_FETCH_TIMEOUT_SECONDS", "25"))
 
     # Exports
     EXPORTS_DIR: str = os.path.join(OUTPUT_DIR, "exports")

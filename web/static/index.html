@@ -60,21 +60,23 @@
             </div>
 
             <div class="card">
-              <h3>Trigger Video Pipeline</h3>
+              <h3>Trigger Video Pipeline (Legacy)</h3>
               <input
                 id="sns-webhook-url"
                 placeholder="PowerAutomate webhook URL (optional)"
               />
               <button id="trigger-pipeline">Run pipeline</button>
               <pre id="pipeline-result"></pre>
-              <p class="hint">Requires backend running. Supabase not required for this demo.</p>
+              <p class="hint">
+                Legacy flow = outline → script → video. If outline is empty but you already generated/edited a script in Script Studio, this button will generate video from that script.
+              </p>
             </div>
 
             <div class="card">
-              <h3>Long-form System: Create RAW input</h3>
+              <h3>Script Studio (v2): Inputs</h3>
               <select id="use-case">
-                <option value="TRAINING">TRAINING</option>
                 <option value="GENERATION">GENERATION</option>
+                <option value="TRAINING">TRAINING</option>
               </select>
               <input id="raw-domain" placeholder="domain (e.g. stocks, history)" />
               <input id="raw-topic" placeholder="topic (optional)" />
@@ -85,18 +87,32 @@
               <input id="raw-web-url" placeholder="Web URL (optional)" />
               <input id="raw-youtube-url" placeholder="YouTube URL (optional)" />
               <input id="raw-channel-link" placeholder="YouTube channel link (optional)" />
-              <button id="create-raw">Create RAW</button>
-              <pre id="raw-result"></pre>
-              <p class="hint">OR-combination allowed. All items are stored in a single main table (filter by use_case/status).</p>
+              <button id="generate-v2">Generate script (one click)</button>
+              <pre id="v2-progress"></pre>
+              <p class="hint">No manual content_id needed. The system creates it internally and shows it only after the script is ready.</p>
             </div>
 
             <div class="card">
-              <h3>Long-form System: Run pipeline steps</h3>
-              <input id="content-id" placeholder="content_id" />
+              <h3>Script Studio (v2): Output</h3>
+              <input id="content-id" placeholder="content_id (shown after output is ready)" class="hidden" />
+              <textarea id="script-editor" placeholder="Your script will appear here. You can edit it, or paste your own script."></textarea>
               <div class="row3">
-                <button id="run-clean">Clean</button>
-                <button id="run-classify">Classify</button>
-                <button id="run-generate">Generate</button>
+                <button id="save-script">Save script</button>
+                <button id="export-docx">Export DOCX</button>
+                <button id="export-pdf">Export PDF</button>
+              </div>
+              <div class="row3">
+                <button id="export-txt">Export TXT</button>
+                <button id="generate-video">Generate video</button>
+                <button id="refresh-current">Refresh</button>
+              </div>
+              <div class="row3">
+                <button id="clear-current" class="btn-secondary">Clear current script</button>
+              </div>
+              <pre id="action-result"></pre>
+              <div class="row">
+                <input id="video-duration" type="number" min="1" placeholder="Video duration (minutes, optional)" />
+                <div class="hint" style="align-self:center">Example: 2 = 2 minutes. If empty, default timing is used.</div>
               </div>
 
               <details>
@@ -119,15 +135,19 @@
                 ></textarea>
                 <div class="row3">
                   <button id="save-config">Save config</button>
-                  <button id="export-docx">Export DOCX</button>
-                  <button id="export-pdf">Export PDF</button>
+                  <button id="advanced-create-raw">Advanced: Create RAW only</button>
+                  <button id="advanced-run-generate">Advanced: Generate for existing content_id</button>
                 </div>
                 <pre id="config-result"></pre>
               </details>
 
-              <pre id="job-result"></pre>
-              <pre id="content-result"></pre>
-              <p class="hint">Async jobs: the UI polls /v2/jobs/{job_id} and shows outputs once status=OUTPUT.</p>
+              <details>
+                <summary>Debug (optional)</summary>
+                <pre id="job-result"></pre>
+                <pre id="content-result"></pre>
+                <p class="hint">Debug JSON only. Normal users don’t need this.</p>
+              </details>
+              <p class="hint">Tip: the content_id is created internally and shown only after the script is ready.</p>
             </div>
 
             <div class="card">

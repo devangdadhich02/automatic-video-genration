@@ -1,4 +1,33 @@
 (function () {
+  const STORAGE_KEY = 'video_automation_v2_state';
+
+  function saveUiState(partial) {
+    try {
+      const prev = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
+      const next = { ...prev, ...(partial || {}), _savedAt: Date.now() };
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    } catch {}
+  }
+
+  function loadUiState() {
+    try {
+      return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}') || {};
+    } catch {
+      return {};
+    }
+  }
+
+  function wirePersist(el, key, { event = 'input' } = {}) {
+    if (!el) return;
+    el.addEventListener(event, () => {
+      saveUiState({ [key]: el.value });
+    });
+  }
+
+  // Prevent duplicate polling loops after multiple refreshes/clicks.
+  // IMPORTANT: must auto-release on completion/failure, otherwise buttons appear "stuck".
+  const pollPromises = new Map();
+
   const SUPABASE_URL = window.SUPABASE_URL || 'https://YOUR_SUPABASE_URL';
   const SUPABASE_ANON_KEY = window.SUPABASE_ANON_KEY || 'YOUR_SUPABASE_ANON_KEY';
 
@@ -47,13 +76,18 @@
   const rawWebUrlInput = document.getElementById('raw-web-url');
   const rawYoutubeUrlInput = document.getElementById('raw-youtube-url');
   const rawChannelLinkInput = document.getElementById('raw-channel-link');
-  const createRawBtn = document.getElementById('create-raw');
-  const rawResult = document.getElementById('raw-result');
+  const generateV2Btn = document.getElementById('generate-v2');
+  const v2Progress = document.getElementById('v2-progress');
 
   const contentIdInput = document.getElementById('content-id');
-  const runCleanBtn = document.getElementById('run-clean');
-  const runClassifyBtn = document.getElementById('run-classify');
-  const runGenerateBtn = document.getElementById('run-generate');
+  const scriptEditor = document.getElementById('script-editor');
+  const saveScriptBtn = document.getElementById('save-script');
+  const exportTxtBtn = document.getElementById('export-txt');
+  const generateVideoBtn = document.getElementById('generate-video');
+  const refreshCurrentBtn = document.getElementById('refresh-current');
+  const clearCurrentBtn = document.getElementById('clear-current');
+  const videoDurationInput = document.getElementById('video-duration');
+  const actionResult = document.getElementById('action-result');
   const jobResult = document.getElementById('job-result');
   const contentResult = document.getElementById('content-result');
 
@@ -68,6 +102,8 @@
   const exportDocxBtn = document.getElementById('export-docx');
   const exportPdfBtn = document.getElementById('export-pdf');
   const configResult = document.getElementById('config-result');
+  const advancedCreateRawBtn = document.getElementById('advanced-create-raw');
+  const advancedRunGenerateBtn = document.getElementById('advanced-run-generate');
 
   const refreshStoryTypesBtn = document.getElementById('refresh-story-types');
   const storyTypesList = document.getElementById('story-types-list');
@@ -116,14 +152,26 @@
   }
 
   async function pollJob(jobId, { onTick } = {}) {
-    const deadline = Date.now() + 30 * 60 * 1000; // 30 minutes
-    while (Date.now() < deadline) {
-      const { json } = await fetchJson(`${BACKEND_BASE}/v2/jobs/${jobId}`);
-      if (onTick) onTick(json);
-      if (json.status === 'completed' || json.status === 'failed') return json;
-      await new Promise((r) => setTimeout(r, 2000));
-    }
-    return { status: 'timeout', job_id: jobId };
+    if (!jobId) return { status: 'invalid', job_id: jobId };
+    if (pollPromises.has(jobId)) return await pollPromises.get(jobId);
+
+    const p = (async () => {
+      const deadline = Date.now() + 30 * 60 * 1000; // 30 minutes
+      try {
+        while (Date.now() < deadline) {
+          const { json } = await fetchJson(`${BACKEND_BASE}/v2/jobs/${jobId}`);
+          if (onTick) onTick(json);
+          if (json.status === 'completed' || json.status === 'failed') return json;
+          await new Promise((r) => setTimeout(r, 2000));
+        }
+        return { status: 'timeout', job_id: jobId };
+      } finally {
+        pollPromises.delete(jobId);
+      }
+    })();
+
+    pollPromises.set(jobId, p);
+    return await p;
   }
 
   async function loadContent(contentId) {
@@ -134,12 +182,17 @@
         const cfg = json.config_json || {};
         contentConfigInput.value = Object.keys(cfg).length ? JSON.stringify(cfg, null, 2) : '';
       }
+      if (scriptEditor) {
+        const txt = json.final_output || '';
+        if (txt && (!scriptEditor.value || scriptEditor.value.trim().length < 30)) {
+          scriptEditor.value = txt;
+        }
+      }
     } catch {}
     return json;
   }
 
-  async function createRaw() {
-    rawResult.textContent = 'Creating...';
+  function getRawInputBody() {
     const body = {
       use_case: (useCaseSelect?.value || 'TRAINING').trim(),
       domain: rawDomainInput?.value?.trim() || null,
@@ -151,111 +204,374 @@
       youtube_url: rawYoutubeUrlInput?.value?.trim() || null,
       channel_link: rawChannelLinkInput?.value?.trim() || null
     };
-    const { json, ok } = await fetchJson(`${BACKEND_BASE}/v2/content/raw`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-    rawResult.textContent = JSON.stringify(json, null, 2);
-    if (ok && json.content_id) {
-      contentIdInput.value = json.content_id;
-
-      // Optional: PDF upload as an additional input source
-      try {
-        const file = rawPdfInput?.files?.[0] || null;
-        if (file) {
-          rawResult.textContent = 'Uploading PDF...';
-          const fd = new FormData();
-          fd.append('file', file, file.name);
-          const res = await fetch(`${BACKEND_BASE}/v2/content/${json.content_id}/upload/pdf`, {
-            method: 'POST',
-            body: fd
-          });
-          const txt = await res.text();
-          let pdfJson = { raw: txt };
-          try {
-            pdfJson = JSON.parse(txt);
-          } catch {}
-          rawResult.textContent = JSON.stringify({ created: json, pdf_upload: pdfJson }, null, 2);
-        }
-      } catch (e) {
-        rawResult.textContent = JSON.stringify({ created: json, pdf_upload_error: String(e?.message || e) }, null, 2);
-      }
-
-      await loadContent(json.content_id);
-    }
+    return body;
   }
 
-  async function runClean() {
-    const contentId = contentIdInput.value.trim();
-    if (!contentId) return;
-    jobResult.textContent = 'Starting clean job...';
-    const { json } = await fetchJson(`${BACKEND_BASE}/v2/content/${contentId}/clean/async`, {
-      method: 'POST'
-    });
-    jobResult.textContent = JSON.stringify(json, null, 2);
-    const jobId = json.job_id;
-    if (!jobId) return;
-    const final = await pollJob(jobId, {
-      onTick: (j) => {
-        jobResult.textContent = JSON.stringify(j, null, 2);
-      }
-    });
-    jobResult.textContent = JSON.stringify(final, null, 2);
-    await loadContent(contentId);
-  }
-
-  async function runClassify() {
-    const contentId = contentIdInput.value.trim();
-    if (!contentId) return;
-    jobResult.textContent = 'Starting classify job...';
-    const body = {
-      manual_story_type: genStoryTypeInput?.value?.trim() || null
-    };
-    const { json } = await fetchJson(`${BACKEND_BASE}/v2/content/${contentId}/classify/async`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body)
-    });
-    jobResult.textContent = JSON.stringify(json, null, 2);
-    const jobId = json.job_id;
-    if (!jobId) return;
-    const final = await pollJob(jobId, {
-      onTick: (j) => {
-        jobResult.textContent = JSON.stringify(j, null, 2);
-      }
-    });
-    jobResult.textContent = JSON.stringify(final, null, 2);
-    await loadContent(contentId);
-  }
-
-  async function runGenerate() {
-    const contentId = contentIdInput.value.trim();
-    if (!contentId) return;
-    jobResult.textContent = 'Starting generate job...';
-    const body = {
+  function getGenerateBody() {
+    return {
       story_type: genStoryTypeInput?.value?.trim() || null,
       ai_provider: genProviderInput?.value?.trim() || null,
       ai_model: genModelInput?.value?.trim() || null,
       prompt_version: genPromptVersionInput?.value?.trim() || null,
       total_chars_target: Number(genTotalCharsInput?.value || 30000),
-      steps: genStepsInput?.value ? Number(genStepsInput.value) : null
+      steps: genStepsInput?.value ? Number(genStepsInput.value) : null,
+      config: safeJsonParse(contentConfigInput?.value || '')
     };
-    const { json } = await fetchJson(`${BACKEND_BASE}/v2/generation/${contentId}/generate/async`, {
+  }
+
+  function setHidden(el, hidden) {
+    if (!el) return;
+    if (hidden) el.classList.add('hidden');
+    else el.classList.remove('hidden');
+  }
+
+  function setActionStatus(msg) {
+    if (!actionResult) return;
+    actionResult.textContent = msg || '';
+  }
+
+  function setButtonsDisabled(disabled) {
+    const btns = [
+      saveScriptBtn,
+      exportDocxBtn,
+      exportPdfBtn,
+      exportTxtBtn,
+      generateVideoBtn,
+      refreshCurrentBtn,
+      clearCurrentBtn,
+      generateV2Btn
+    ];
+    btns.forEach((b) => {
+      if (b) b.disabled = !!disabled;
+    });
+  }
+
+  let currentContentId = null;
+
+  function restoreUiState() {
+    const s = loadUiState();
+
+    // Legacy "Generate Script" / "Trigger Video Pipeline" inputs
+    if (outlineInput && s.legacy_outline) outlineInput.value = s.legacy_outline;
+    if (languageInput && s.legacy_language) languageInput.value = s.legacy_language;
+    if (targetMinutesInput && s.legacy_target_minutes) targetMinutesInput.value = s.legacy_target_minutes;
+    if (snsWebhookInput && s.legacy_webhook) snsWebhookInput.value = s.legacy_webhook;
+
+    // Script Studio inputs
+    if (useCaseSelect && s.use_case) useCaseSelect.value = s.use_case;
+    if (rawDomainInput && s.raw_domain) rawDomainInput.value = s.raw_domain;
+    if (rawTopicInput && s.raw_topic) rawTopicInput.value = s.raw_topic;
+    if (rawSubTopicInput && s.raw_sub_topic) rawSubTopicInput.value = s.raw_sub_topic;
+    if (rawChannelInput && s.raw_channel) rawChannelInput.value = s.raw_channel;
+    if (rawTextInput && s.raw_text) rawTextInput.value = s.raw_text;
+    if (rawWebUrlInput && s.raw_web_url) rawWebUrlInput.value = s.raw_web_url;
+    if (rawYoutubeUrlInput && s.raw_youtube_url) rawYoutubeUrlInput.value = s.raw_youtube_url;
+    if (rawChannelLinkInput && s.raw_channel_link) rawChannelLinkInput.value = s.raw_channel_link;
+
+    // Generation options + config
+    if (genStoryTypeInput && s.gen_story_type) genStoryTypeInput.value = s.gen_story_type;
+    if (genProviderInput && s.gen_provider) genProviderInput.value = s.gen_provider;
+    if (genModelInput && s.gen_model) genModelInput.value = s.gen_model;
+    if (genPromptVersionInput && s.gen_prompt_version) genPromptVersionInput.value = s.gen_prompt_version;
+    if (genTotalCharsInput && s.gen_total_chars) genTotalCharsInput.value = s.gen_total_chars;
+    if (genStepsInput && s.gen_steps) genStepsInput.value = s.gen_steps;
+    if (contentConfigInput && s.config_json) contentConfigInput.value = s.config_json;
+    if (videoDurationInput && s.video_duration) videoDurationInput.value = s.video_duration;
+
+    // Current working content/script
+    if (s.current_content_id) {
+      currentContentId = s.current_content_id;
+      if (contentIdInput) {
+        contentIdInput.value = s.current_content_id;
+        // Only show content_id if a script already exists (so UX stays clean).
+        setHidden(contentIdInput, !s.script_editor);
+      }
+    }
+    if (scriptEditor && s.script_editor) {
+      scriptEditor.value = s.script_editor;
+    }
+  }
+
+  function renderV2Progress(j) {
+    if (!v2Progress) return;
+    const p = j.progress || {};
+    const phase = p.phase || j.status || 'running';
+    if (phase === 'auto_cleaning' || phase === 'cleaning') {
+      v2Progress.textContent = 'Cleaning input text…';
+      return;
+    }
+    if (phase === 'outline') {
+      v2Progress.textContent = 'Creating outline…';
+      return;
+    }
+    if (phase === 'generating') {
+      const step = Number(p.step || 0);
+      const total = Number(p.total_steps || 0);
+      if (total > 0 && step > 0) {
+        v2Progress.textContent = `Generating script… step ${step}/${total}`;
+      } else {
+        v2Progress.textContent = 'Generating script…';
+      }
+      return;
+    }
+    if (phase === 'polishing') {
+      v2Progress.textContent = 'Polishing tone…';
+      return;
+    }
+    if (j.status === 'completed') {
+      v2Progress.textContent = 'Done.';
+      return;
+    }
+    if (j.status === 'failed') {
+      v2Progress.textContent = 'Failed.';
+      return;
+    }
+    v2Progress.textContent = 'Working…';
+  }
+
+  function renderVideoProgress(j) {
+    if (!jobResult) return;
+    const p = j.progress || {};
+    const phase = p.phase || j.status || 'running';
+    if (phase === 'video') jobResult.textContent = 'Generating video…';
+    else if (phase === 'done' || j.status === 'completed') jobResult.textContent = 'Video done.';
+    else if (j.status === 'failed') jobResult.textContent = 'Video failed.';
+    else jobResult.textContent = 'Generating video…';
+  }
+
+  async function resumeInFlightJobs() {
+    const s = loadUiState();
+
+    // Resume Script Studio generation job (v2)
+    if (s.v2_job_id && s.v2_job_status === 'running' && s.current_content_id) {
+      try {
+        if (v2Progress) v2Progress.textContent = 'Resuming generation…';
+        const final = await pollJob(s.v2_job_id, { onTick: renderV2Progress });
+        if (final.status === 'completed') {
+          const cid = s.current_content_id;
+          currentContentId = cid;
+          if (contentIdInput) {
+            contentIdInput.value = cid;
+            setHidden(contentIdInput, false);
+          }
+          const content = await loadContent(cid);
+          if (scriptEditor) scriptEditor.value = content.final_output || scriptEditor.value || '';
+          saveUiState({ v2_job_id: null, v2_job_status: null, script_editor: scriptEditor?.value || '' });
+          if (v2Progress) v2Progress.textContent = 'Script ready. You can edit and export now.';
+        }
+        if (final.status === 'failed') {
+          saveUiState({ v2_job_status: 'failed' });
+        }
+      } catch {}
+    }
+
+    // Resume video job
+    if (s.video_job_id && s.video_job_status === 'running' && s.current_content_id) {
+      try {
+        const final = await pollJob(s.video_job_id, { onTick: renderVideoProgress });
+        if (final.status === 'completed') {
+          saveUiState({ video_job_id: null, video_job_status: null });
+          await loadContent(s.current_content_id);
+        }
+      } catch {}
+    }
+
+    // Resume legacy "Generate Script" job
+    if (s.legacy_script_job_id && s.legacy_script_job_status === 'running') {
+      try {
+        scriptResult.textContent = 'Resuming script generation…';
+        const deadline = Date.now() + 15 * 60 * 1000;
+        while (Date.now() < deadline) {
+          await new Promise((r) => setTimeout(r, 2000));
+          const statusRes = await fetch(`${BACKEND_BASE}/generate/script/status/${s.legacy_script_job_id}`);
+          const statusJson = await statusRes.json();
+          if (statusJson.progress) {
+            const p = statusJson.progress;
+            const idx = Number(p.section_index || 0);
+            const total = Number(p.total_sections || 0);
+            const phase = p.phase || 'running';
+            if (total > 0) {
+              scriptResult.textContent = `Generating... (${phase}) section ${Math.min(idx + 1, total)}/${total}`;
+            } else {
+              scriptResult.textContent = `Generating... (${phase})`;
+            }
+          }
+          if (statusJson.status === 'completed') {
+            scriptResult.textContent = statusJson.result?.script || JSON.stringify(statusJson, null, 2);
+            saveUiState({ legacy_script_job_id: null, legacy_script_job_status: null });
+            break;
+          }
+          if (statusJson.status === 'failed') {
+            scriptResult.textContent = 'Job failed: ' + (statusJson.error || JSON.stringify(statusJson, null, 2));
+            saveUiState({ legacy_script_job_status: 'failed' });
+            break;
+          }
+        }
+      } catch {}
+    }
+  }
+
+  function clearCurrentScript() {
+    // UI-only clear. Does NOT delete backend rows. Keeps inputs so user can regenerate quickly.
+    currentContentId = null;
+    try {
+      if (contentIdInput) {
+        contentIdInput.value = '';
+        setHidden(contentIdInput, true);
+      }
+      if (scriptEditor) scriptEditor.value = '';
+      if (v2Progress) v2Progress.textContent = '';
+      setActionStatus('Cleared. You can generate a new script now.');
+
+      // Stop resume/polling on refresh by clearing job pointers.
+      saveUiState({
+        current_content_id: null,
+        script_editor: '',
+        v2_job_id: null,
+        v2_job_status: null,
+        video_job_id: null,
+        video_job_status: null
+      });
+    } catch {}
+  }
+
+  async function createRawOnly() {
+    const body = getRawInputBody();
+    const { json, ok } = await fetchJson(`${BACKEND_BASE}/v2/content/raw`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!ok || !json.content_id) throw new Error(JSON.stringify(json));
+    const cid = json.content_id;
+
+    // Optional: PDF upload as an additional input source
+    const file = rawPdfInput?.files?.[0] || null;
+    if (file) {
+      const fd = new FormData();
+      fd.append('file', file, file.name);
+      await fetch(`${BACKEND_BASE}/v2/content/${cid}/upload/pdf`, { method: 'POST', body: fd });
+    }
+    saveUiState({ current_content_id: cid });
+    return cid;
+  }
+
+  async function generateOneClickV2() {
+    if (!v2Progress) return;
+    v2Progress.textContent = 'Starting…';
+    setHidden(contentIdInput, true);
+    if (scriptEditor) scriptEditor.value = '';
+    setActionStatus('');
+    setButtonsDisabled(true);
+
+    const useCase = (useCaseSelect?.value || 'GENERATION').trim().toUpperCase();
+    if (useCase !== 'GENERATION') {
+      // Training: only create the row; no script generation.
+      const cid = await createRawOnly();
+      currentContentId = cid;
+      contentIdInput.value = cid;
+      setHidden(contentIdInput, false);
+      v2Progress.textContent = `TRAINING row created. content_id: ${cid}\nNow use Training DB panels to add story types/prompts/examples.`;
+      await loadContent(cid);
+      setButtonsDisabled(false);
+      return;
+    }
+
+    const cid = await createRawOnly();
+    currentContentId = cid;
+    saveUiState({ current_content_id: cid });
+
+    v2Progress.textContent = 'Working… (collecting + cleaning + generating)';
+    const body = getGenerateBody();
+    const { json } = await fetchJson(`${BACKEND_BASE}/v2/generation/${cid}/generate/async`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    if (!json.job_id) {
+      v2Progress.textContent = 'Failed to start job: ' + JSON.stringify(json, null, 2);
+      setButtonsDisabled(false);
+      return;
+    }
+    saveUiState({ v2_job_id: json.job_id, v2_job_status: 'running' });
+
+    const final = await pollJob(json.job_id, {
+      onTick: renderV2Progress
+    });
+
+    if (final.status !== 'completed') {
+      v2Progress.textContent = 'Job failed: ' + JSON.stringify(final, null, 2);
+      saveUiState({ v2_job_status: 'failed' });
+      setButtonsDisabled(false);
+      return;
+    }
+
+    // Only now reveal content_id
+    contentIdInput.value = cid;
+    setHidden(contentIdInput, false);
+    saveUiState({ current_content_id: cid });
+
+    const content = await loadContent(cid);
+    if (scriptEditor) scriptEditor.value = content.final_output || '';
+    saveUiState({ script_editor: (scriptEditor?.value || '') });
+    saveUiState({ v2_job_id: null, v2_job_status: null });
+    v2Progress.textContent = 'Script ready. You can edit and export now.';
+    setActionStatus('Script ready. You can edit, save, export, or generate video.');
+    setButtonsDisabled(false);
+  }
+
+  async function saveScript() {
+    const cid = (contentIdInput?.value || currentContentId || '').trim();
+    if (!cid) return;
+    if (!scriptEditor) return;
+    setButtonsDisabled(true);
+    setActionStatus('Saving script…');
+    const body = { final_output: scriptEditor.value || '' };
+    const { json } = await fetchJson(`${BACKEND_BASE}/v2/contents/${cid}/final`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body)
     });
     jobResult.textContent = JSON.stringify(json, null, 2);
-    const jobId = json.job_id;
-    if (!jobId) return;
-    const final = await pollJob(jobId, {
+    saveUiState({ current_content_id: cid, script_editor: scriptEditor.value || '' });
+    await loadContent(cid);
+    setActionStatus('Saved. ✅');
+    setButtonsDisabled(false);
+  }
+
+  async function generateVideo() {
+    const cid = (contentIdInput?.value || currentContentId || '').trim();
+    if (!cid) return;
+    const script = scriptEditor?.value || '';
+    // UI uses minutes (more natural). Backend expects seconds.
+    const targetMinutes = videoDurationInput?.value ? Number(videoDurationInput.value) : null;
+    const targetSeconds = targetMinutes ? Math.max(1, Math.floor(targetMinutes * 60)) : null;
+    saveUiState({ video_duration: videoDurationInput?.value || '' });
+    setButtonsDisabled(true);
+    setActionStatus('Starting video generation… (this can take time)');
+    const { json } = await fetchJson(`${BACKEND_BASE}/v2/contents/${cid}/video/async`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ script, target_duration_seconds: targetSeconds })
+    });
+    jobResult.textContent = JSON.stringify(json, null, 2);
+    if (!json.job_id) return;
+    saveUiState({ video_job_id: json.job_id, video_job_status: 'running' });
+    const final = await pollJob(json.job_id, {
       onTick: (j) => {
+        renderVideoProgress(j);
         jobResult.textContent = JSON.stringify(j, null, 2);
       }
     });
     jobResult.textContent = JSON.stringify(final, null, 2);
-    await loadContent(contentId);
+    saveUiState({ video_job_id: null, video_job_status: null });
+    await loadContent(cid);
+    if (final.status === 'completed') {
+      setActionStatus('Video done ✅. Check backend/outputs/ for the mp4 files.');
+    } else {
+      setActionStatus('Video failed. Open Debug to see details.');
+    }
+    setButtonsDisabled(false);
   }
 
   async function refreshStoryTypes() {
@@ -297,21 +613,29 @@
       body: JSON.stringify(body)
     });
     configResult.textContent = JSON.stringify(json, null, 2);
+    saveUiState({ config_json: contentConfigInput?.value || '' });
     await loadContent(contentId);
   }
 
   async function exportFormats(formats) {
-    const contentId = contentIdInput.value.trim();
+    const contentId = (contentIdInput?.value || currentContentId || '').trim();
     if (!contentId) return;
-    if (!configResult) return;
-    configResult.textContent = 'Exporting...';
+    setButtonsDisabled(true);
+    setActionStatus(`Exporting ${formats.join(', ')}…`);
     const { json } = await fetchJson(`${BACKEND_BASE}/v2/contents/${contentId}/export`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ formats })
     });
-    configResult.textContent = JSON.stringify(json, null, 2);
+    if (configResult) configResult.textContent = JSON.stringify(json, null, 2);
     await loadContent(contentId);
+    if (json && json.exports && json.exports.length) {
+      const paths = json.exports.map((e) => e.path).filter(Boolean);
+      setActionStatus(`Exported ✅\n${paths.join('\n')}`);
+    } else {
+      setActionStatus('Export finished (no files returned). Open Debug for details.');
+    }
+    setButtonsDisabled(false);
   }
 
   async function saveStoryType() {
@@ -491,8 +815,47 @@
 
   async function triggerPipeline() {
     const outline = outlineInput.value.trim();
+    const cid = (contentIdInput?.value || currentContentId || '').trim();
+    const editorText = (scriptEditor?.value || '').trim();
+
+    // If no outline provided, but we have an edited script, generate video from that script (v2).
+    if (!outline && cid && editorText) {
+      pipelineResult.textContent = 'Starting video job from Script Studio text...';
+      try {
+        const start = await fetchJson(`${BACKEND_BASE}/v2/contents/${cid}/video/async`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ script: editorText })
+        });
+        const jobId = start.json?.job_id;
+        if (!jobId) {
+          pipelineResult.textContent = 'Failed to start video job: ' + JSON.stringify(start.json, null, 2);
+          return;
+        }
+        saveUiState({ video_job_id: jobId, video_job_status: 'running' });
+        const final = await pollJob(jobId, {
+          onTick: (j) => {
+            const p = j.progress || {};
+            pipelineResult.textContent = `Generating video... (${p.phase || j.status || 'running'})\njob: ${jobId}`;
+          }
+        });
+        if (final.status === 'completed') {
+          pipelineResult.textContent = JSON.stringify(final.result, null, 2);
+          await loadContent(cid);
+          saveUiState({ video_job_id: null, video_job_status: null });
+          return;
+        }
+        pipelineResult.textContent = 'Video job failed: ' + JSON.stringify(final, null, 2);
+        saveUiState({ video_job_status: 'failed' });
+      } catch (err) {
+        pipelineResult.textContent = 'Error: ' + err.message;
+      }
+      return;
+    }
+
     if (!outline) {
-      pipelineResult.textContent = 'Provide an outline first.';
+      pipelineResult.textContent =
+        'Provide an outline first.\n\nTip: If you already generated/edited a script in Script Studio, use the “Generate video” button there (or ensure content_id is available and try again).';
       return;
     }
     const webhookUrl = snsWebhookInput.value.trim() || null;
@@ -571,6 +934,7 @@
         scriptResult.textContent = 'Failed to start job: ' + JSON.stringify(startJson, null, 2);
         return;
       }
+      saveUiState({ legacy_script_job_id: jobId, legacy_script_job_status: 'running' });
 
       scriptResult.textContent = `Generating... (job: ${jobId})`;
 
@@ -594,10 +958,12 @@
 
         if (statusJson.status === 'completed') {
           scriptResult.textContent = statusJson.result?.script || JSON.stringify(statusJson, null, 2);
+          saveUiState({ legacy_script_job_id: null, legacy_script_job_status: null });
           return;
         }
         if (statusJson.status === 'failed') {
           scriptResult.textContent = 'Job failed: ' + (statusJson.error || JSON.stringify(statusJson, null, 2));
+          saveUiState({ legacy_script_job_status: 'failed' });
           return;
         }
       }
@@ -617,10 +983,26 @@
   generateScriptBtn.addEventListener('click', generateScript);
   triggerPipelineBtn.addEventListener('click', triggerPipeline);
 
-  if (createRawBtn) createRawBtn.addEventListener('click', createRaw);
-  if (runCleanBtn) runCleanBtn.addEventListener('click', runClean);
-  if (runClassifyBtn) runClassifyBtn.addEventListener('click', runClassify);
-  if (runGenerateBtn) runGenerateBtn.addEventListener('click', runGenerate);
+  if (generateV2Btn) generateV2Btn.addEventListener('click', generateOneClickV2);
+  if (saveScriptBtn) saveScriptBtn.addEventListener('click', saveScript);
+  if (generateVideoBtn) generateVideoBtn.addEventListener('click', generateVideo);
+  if (refreshCurrentBtn)
+    refreshCurrentBtn.addEventListener('click', async () => {
+      const cid = (contentIdInput?.value || currentContentId || '').trim();
+      if (!cid) return;
+      setButtonsDisabled(true);
+      setActionStatus('Refreshing…');
+      await loadContent(cid);
+      setActionStatus('Refreshed.');
+      setButtonsDisabled(false);
+    });
+
+  if (clearCurrentBtn)
+    clearCurrentBtn.addEventListener('click', () => {
+      const ok = confirm('Clear the currently loaded script from the UI? (This will not delete anything from the backend.)');
+      if (!ok) return;
+      clearCurrentScript();
+    });
   if (refreshStoryTypesBtn) refreshStoryTypesBtn.addEventListener('click', refreshStoryTypes);
   if (saveStoryTypeBtn) saveStoryTypeBtn.addEventListener('click', saveStoryType);
   if (refreshStepPromptsBtn) refreshStepPromptsBtn.addEventListener('click', refreshStepPrompts);
@@ -630,9 +1012,83 @@
   if (saveConfigBtn) saveConfigBtn.addEventListener('click', saveConfig);
   if (exportDocxBtn) exportDocxBtn.addEventListener('click', () => exportFormats(['docx']));
   if (exportPdfBtn) exportPdfBtn.addEventListener('click', () => exportFormats(['pdf']));
+  if (exportTxtBtn) exportTxtBtn.addEventListener('click', () => exportFormats(['txt']));
+
+  // Advanced actions (debugging only)
+  if (advancedCreateRawBtn)
+    advancedCreateRawBtn.addEventListener('click', async () => {
+      try {
+        const cid = await createRawOnly();
+        currentContentId = cid;
+        contentIdInput.value = cid;
+        setHidden(contentIdInput, false);
+        if (v2Progress) v2Progress.textContent = `Created RAW only. content_id: ${cid}`;
+        await loadContent(cid);
+      } catch (e) {
+        if (v2Progress) v2Progress.textContent = 'Advanced create failed: ' + String(e?.message || e);
+      }
+    });
+
+  if (advancedRunGenerateBtn)
+    advancedRunGenerateBtn.addEventListener('click', async () => {
+      const cid = (contentIdInput?.value || '').trim();
+      if (!cid) return;
+      if (v2Progress) v2Progress.textContent = 'Starting generate for existing content_id...';
+      const body = getGenerateBody();
+      const { json } = await fetchJson(`${BACKEND_BASE}/v2/generation/${cid}/generate/async`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      if (!json.job_id) {
+        if (v2Progress) v2Progress.textContent = 'Failed to start job: ' + JSON.stringify(json, null, 2);
+        return;
+      }
+      const final = await pollJob(json.job_id, {
+        onTick: (j) => {
+          if (v2Progress) v2Progress.textContent = JSON.stringify(j, null, 2);
+        }
+      });
+      if (final.status === 'completed') {
+        const content = await loadContent(cid);
+        if (scriptEditor) scriptEditor.value = content.final_output || '';
+      }
+    });
 
   // Initial session check
   checkSession();
+
+  // Persist / restore UI state so hard refresh doesn't wipe the operator flow.
+  restoreUiState();
+  // Resume any in-flight jobs after refresh (so generation doesn't “disappear”).
+  resumeInFlightJobs();
+
+  // Persist legacy inputs so refresh doesn't wipe them.
+  wirePersist(outlineInput, 'legacy_outline');
+  wirePersist(languageInput, 'legacy_language');
+  wirePersist(targetMinutesInput, 'legacy_target_minutes');
+  wirePersist(snsWebhookInput, 'legacy_webhook');
+  wirePersist(useCaseSelect, 'use_case', { event: 'change' });
+  wirePersist(rawDomainInput, 'raw_domain');
+  wirePersist(rawTopicInput, 'raw_topic');
+  wirePersist(rawSubTopicInput, 'raw_sub_topic');
+  wirePersist(rawChannelInput, 'raw_channel');
+  wirePersist(rawTextInput, 'raw_text');
+  wirePersist(rawWebUrlInput, 'raw_web_url');
+  wirePersist(rawYoutubeUrlInput, 'raw_youtube_url');
+  wirePersist(rawChannelLinkInput, 'raw_channel_link');
+  wirePersist(genStoryTypeInput, 'gen_story_type');
+  wirePersist(genProviderInput, 'gen_provider');
+  wirePersist(genModelInput, 'gen_model');
+  wirePersist(genPromptVersionInput, 'gen_prompt_version');
+  wirePersist(genTotalCharsInput, 'gen_total_chars');
+  wirePersist(genStepsInput, 'gen_steps');
+  wirePersist(contentConfigInput, 'config_json');
+  wirePersist(videoDurationInput, 'video_duration');
+  if (scriptEditor) {
+    // Save script edits locally so refresh doesn't wipe them
+    scriptEditor.addEventListener('input', () => saveUiState({ script_editor: scriptEditor.value || '' }));
+  }
 
   // Load training metadata in background (non-blocking)
   try {

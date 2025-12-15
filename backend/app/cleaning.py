@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import re
 from dataclasses import dataclass
+import html
 from typing import List, Optional, Sequence, Tuple
 
 import httpx
@@ -173,6 +174,7 @@ async def extract_youtube_transcript(url_or_id: str, *, prefer_langs: Sequence[s
     if not vid:
         return ""
 
+    # 1) First try youtube-transcript-api (fast when it works)
     try:
         from youtube_transcript_api import YouTubeTranscriptApi  # type: ignore
 
@@ -183,9 +185,133 @@ async def extract_youtube_transcript(url_or_id: str, *, prefer_langs: Sequence[s
             items = YouTubeTranscriptApi.get_transcript(vid)
 
         lines = [it.get("text", "").strip() for it in items if it.get("text")]
-        return _collapse_spaces("\n".join(lines))
+        text = _collapse_spaces("\n".join(lines))
+        if text:
+            return text
     except Exception:
-        return ""
+        pass
+
+    # 1.5) Quick fallback: fetch title via oEmbed (fast and lightweight)
+    oembed_title = ""
+    try:
+        oembed_url = f"https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v={vid}&format=json"
+        async with httpx.AsyncClient(follow_redirects=True, timeout=float(settings.YOUTUBE_OEMBED_TIMEOUT_SECONDS)) as client:
+            r = await client.get(oembed_url, headers={"User-Agent": "Mozilla/5.0"})
+            if r.status_code == 200:
+                j = r.json()
+                oembed_title = (j.get("title") or "").strip()
+    except Exception:
+        oembed_title = ""
+
+    # 2) Fallback: try yt-dlp subtitles/auto-captions (more robust)
+    try:
+        import yt_dlp  # type: ignore
+
+        def pick_caption(info: dict) -> Optional[str]:
+            subs = info.get("subtitles") or {}
+            autos = info.get("automatic_captions") or {}
+
+            def pick_from(store: dict) -> Optional[str]:
+                # prefer preferred langs, then any
+                lang_order = list(prefer_langs) + [k for k in store.keys() if k not in prefer_langs]
+                for lang in lang_order:
+                    entries = store.get(lang) or []
+                    # prefer vtt, then srv1/ttml
+                    def score(e: dict) -> int:
+                        ext = (e.get("ext") or "").lower()
+                        if ext == "vtt":
+                            return 3
+                        if ext in {"srv1", "ttml", "xml"}:
+                            return 2
+                        if ext:
+                            return 1
+                        return 0
+
+                    entries = [e for e in entries if isinstance(e, dict) and e.get("url")]
+                    entries.sort(key=score, reverse=True)
+                    if entries:
+                        return str(entries[0]["url"])
+                return None
+
+            return pick_from(subs) or pick_from(autos)
+
+        def _extract_info() -> dict:
+            ydl_opts = {
+                "quiet": True,
+                "skip_download": True,
+                "extract_flat": False,
+                "socket_timeout": 10,
+                "retries": 1,
+                "extractor_retries": 1,
+                "nocheckcertificate": True,
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:  # type: ignore[attr-defined]
+                return ydl.extract_info(f"https://www.youtube.com/watch?v={vid}", download=False) or {}
+
+        # Run yt-dlp in a thread so it never blocks the event loop, and enforce a hard timeout.
+        info = await asyncio.wait_for(asyncio.to_thread(_extract_info), timeout=float(settings.YOUTUBE_YTDLP_TIMEOUT_SECONDS))
+
+        cap_url = pick_caption(info if isinstance(info, dict) else {})
+
+        # Always build a minimal fallback source in case captions are unavailable
+        title = (info.get("title") or "").strip() if isinstance(info, dict) else ""
+        desc = (info.get("description") or "").strip() if isinstance(info, dict) else ""
+        if not title and oembed_title:
+            title = oembed_title
+
+        if cap_url:
+            async with httpx.AsyncClient(
+                follow_redirects=True,
+                timeout=float(settings.YOUTUBE_CAPTION_FETCH_TIMEOUT_SECONDS),
+            ) as client:
+                r = await client.get(cap_url, headers={"User-Agent": "Mozilla/5.0"})
+                r.raise_for_status()
+                payload = r.text or ""
+
+            # Parse WebVTT
+            if "WEBVTT" in payload[:200].upper() or re.search(r"\d\d:\d\d:\d\d\.\d\d\d", payload):
+                lines = []
+                for ln in payload.splitlines():
+                    ln = ln.strip()
+                    if not ln:
+                        continue
+                    if ln.upper().startswith("WEBVTT"):
+                        continue
+                    # timestamps / cue ids
+                    if re.match(r"^\d+$", ln):
+                        continue
+                    if re.match(r"^\d\d:\d\d", ln) and "-->" in ln:
+                        continue
+                    # remove any tags
+                    ln = re.sub(r"<[^>]+>", "", ln).strip()
+                    if ln:
+                        lines.append(ln)
+                txt = _collapse_spaces("\n".join(lines))
+                if txt:
+                    return txt
+
+            # Parse XML/SRV
+            if "<text" in payload and "</text>" in payload:
+                parts = re.findall(r"<text[^>]*>(.*?)</text>", payload, flags=re.DOTALL | re.IGNORECASE)
+                clean = []
+                for p in parts:
+                    p = html.unescape(p)
+                    p = p.replace("\n", " ")
+                    p = re.sub(r"<[^>]+>", "", p).strip()
+                    if p:
+                        clean.append(p)
+                txt = _collapse_spaces("\n".join(clean))
+                if txt:
+                    return txt
+
+        # No captions: return title+description (still useful for generation)
+        fallback = _collapse_spaces("\n\n".join([x for x in [title, desc] if x]))
+        return fallback
+    except asyncio.TimeoutError:
+        # yt-dlp timed out. Return minimal title fallback so pipeline can proceed.
+        return _collapse_spaces(oembed_title) if oembed_title else ""
+    except Exception:
+        return _collapse_spaces(oembed_title) if oembed_title else ""
 
 
 async def extract_youtube_channel_transcripts(
@@ -213,18 +339,23 @@ async def extract_youtube_channel_transcripts(
     except Exception:
         return ""
 
-    # yt-dlp: extract flat list of entries
-    ydl_opts = {
-        "quiet": True,
-        "skip_download": True,
-        "extract_flat": True,
-        "playlistend": int(max_videos),
-    }
-
     entries: List[str] = []
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:  # type: ignore[attr-defined]
-            info = ydl.extract_info(url, download=False)
+        def _extract_channel() -> dict:
+            ydl_opts = {
+                "quiet": True,
+                "skip_download": True,
+                "extract_flat": True,
+                "playlistend": int(max_videos),
+                "socket_timeout": 10,
+                "retries": 1,
+                "extractor_retries": 1,
+                "nocheckcertificate": True,
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:  # type: ignore[attr-defined]
+                return ydl.extract_info(url, download=False)
+
+        info = await asyncio.wait_for(asyncio.to_thread(_extract_channel), timeout=float(settings.YOUTUBE_YTDLP_TIMEOUT_SECONDS))
         raw_entries = []
         if isinstance(info, dict):
             raw_entries = info.get("entries") or []
@@ -304,7 +435,8 @@ async def clean_and_merge(inputs: CleanInputs) -> Tuple[str, str, List[str]]:
     merged = _collapse_spaces(merged)
 
     # Cleaned pipeline: dedupe -> organize paragraphs
-    deduped = dedupe_sentences(merged)
-    cleaned = organize_by_paragraph(deduped)
+    # These can be CPU-heavy on large transcripts; run in a thread to avoid blocking async jobs.
+    deduped = await asyncio.to_thread(dedupe_sentences, merged)
+    cleaned = await asyncio.to_thread(organize_by_paragraph, deduped)
 
     return merged, cleaned, sources

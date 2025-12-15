@@ -17,6 +17,7 @@ from .llm_router import chat, safe_provider_and_model
 from .rag import rag_service
 from .script_jobs import create_job, get_job, update_job
 from .sheets_store import upsert_content_row, upsert_training_record
+from .video_pipeline import video_pipeline
 from .storage import (
     create_content,
     get_channel_dna,
@@ -96,6 +97,18 @@ class ConfigUpdateRequest(BaseModel):
 class ExportRequest(BaseModel):
     formats: List[str] = Field(default_factory=lambda: ["docx", "pdf"])
     filename_prefix: Optional[str] = None
+
+
+class SaveFinalScriptRequest(BaseModel):
+    final_output: str
+
+
+class GenerateVideoFromScriptRequest(BaseModel):
+    script: Optional[str] = None
+    narration_audio_path: Optional[str] = None
+    # Optional: target total duration for the generated LONG video (seconds).
+    # If omitted/null, backend uses defaults (long_seconds_per_scene=30).
+    target_duration_seconds: Optional[int] = Field(None, ge=1)
 
 
 class StoryTypeUpsertRequest(BaseModel):
@@ -1124,3 +1137,108 @@ def api_export(content_id: str, req: ExportRequest):
     update_content(content_id, {"assets_json": assets})
     _sync_sheet(content_id)
     return result
+
+
+@router.post("/contents/{content_id}/final")
+def api_save_final_output(content_id: str, req: SaveFinalScriptRequest):
+    """Save an operator-edited script.
+
+    This keeps the v2 UX usable: user can edit/paste their own script, save, then export/video.
+    """
+    c = get_content(content_id)
+    if not c:
+        raise HTTPException(status_code=404, detail="content_not_found")
+
+    text = (req.final_output or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="final_output_required")
+
+    cfg = _get_effective_config(c, None)
+    if cfg.get("mark_key_terms", True):
+        text = _mark_key_terms_heuristic(text)
+
+    # Rebuild sentence prompts and preserve lineage + existing non-sentence assets (exports/videos/source_pdf)
+    new_sentence_assets = _sentence_asset_prompts(text)
+    for a in new_sentence_assets:
+        a["parent_content_id"] = content_id
+
+    existing_assets = c.get("assets_json") if isinstance(c.get("assets_json"), list) else []
+    existing_assets = list(existing_assets or [])
+    keep: List[Dict[str, Any]] = []
+    for a in existing_assets:
+        if isinstance(a, dict) and a.get("kind"):
+            keep.append(a)
+    assets = new_sentence_assets + keep
+
+    update_content(
+        content_id,
+        {
+            "final_output": text,
+            "assets_json": assets,
+            "status": "OUTPUT",
+            "error_log": None,
+        },
+    )
+    _sync_sheet(content_id)
+    return {"status": "ok", "content_id": content_id}
+
+
+@router.post("/contents/{content_id}/video/async")
+async def api_generate_video_for_content_async(content_id: str, req: GenerateVideoFromScriptRequest):
+    """Generate long+short videos from the final (or provided) script.
+
+    Result is stored as a derivative asset linked only to parent_content_id.
+    """
+    c = get_content(content_id)
+    if not c:
+        raise HTTPException(status_code=404, detail="content_not_found")
+
+    script = (req.script or c.get("final_output") or "").strip()
+    if not script:
+        raise HTTPException(status_code=400, detail="no_script_to_generate_video")
+
+    job = create_job()
+    update_job(job.id, status="running", progress={"phase": "video"}, result={"content_id": content_id})
+
+    async def _run():
+        try:
+            # Optional duration control:
+            # VideoPipeline duration depends on number of paragraphs ("scenes") AND number of images per scene.
+            # We approximate b-roll images per scene as 3 (default in VideoPipeline) so duration is close to target.
+            kwargs: Dict[str, Any] = {}
+            if req.target_duration_seconds:
+                paras = [p.strip() for p in script.split("\n") if p.strip()]
+                scenes = max(1, len(paras))
+                approx_images_per_scene = 3
+                total_units = max(1, scenes * approx_images_per_scene)
+                seconds_per_scene = max(1, int(round(int(req.target_duration_seconds) / total_units)))
+                kwargs["long_seconds_per_scene"] = seconds_per_scene
+            # Ensure unique filenames per content + run
+            kwargs["output_prefix"] = content_id
+
+            result = await asyncio.to_thread(
+                video_pipeline.generate_long_and_short,
+                script,
+                req.narration_audio_path,
+                **kwargs,
+            )
+            # Store as derivative asset (lineage-safe)
+            c2 = get_content(content_id) or {}
+            assets = c2.get("assets_json") if isinstance(c2.get("assets_json"), list) else []
+            assets = list(assets or [])
+            assets.append(
+                {
+                    "parent_content_id": content_id,
+                    "kind": "video",
+                    "result": result,
+                    "target_duration_seconds": req.target_duration_seconds,
+                }
+            )
+            update_content(content_id, {"assets_json": assets})
+            _sync_sheet(content_id)
+            update_job(job.id, status="completed", progress={"phase": "done"}, result={"content_id": content_id, "videos": result})
+        except Exception as e:
+            update_job(job.id, status="failed", error=str(e), result={"content_id": content_id})
+
+    asyncio.create_task(_run())
+    return {"job_id": job.id, "content_id": content_id}

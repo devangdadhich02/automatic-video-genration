@@ -136,11 +136,15 @@ class VideoPipeline:
 
         video_clip = concatenate_videoclips(clips, method="compose")
 
-        # Temporary file without audio
-        temp_path = str(self.output_dir / f"temp_{output_name}")
         final_path = str(self.output_dir / output_name)
 
-        video_clip.write_videofile(temp_path, fps=24)
+        # If we don't need to merge narration audio, write directly to final_path
+        if audio_path:
+            temp_path = str(self.output_dir / f"temp_{output_name}")
+            video_clip.write_videofile(temp_path, fps=24)
+        else:
+            temp_path = final_path
+            video_clip.write_videofile(final_path, fps=24)
         video_clip.close()
 
         if audio_path:
@@ -161,8 +165,6 @@ class VideoPipeline:
             ]
             subprocess.run(cmd, check=True)
             os.remove(temp_path)
-        else:
-            final_path = temp_path
 
         return final_path
 
@@ -172,6 +174,7 @@ class VideoPipeline:
         narration_audio: str | None = None,
         long_seconds_per_scene: int = 30,
         short_seconds_per_scene: int = 5,
+        output_prefix: str | None = None,
     ) -> dict:
         """Generate both long-form (e.g. ~1hr) and short-form versions.
 
@@ -180,8 +183,16 @@ class VideoPipeline:
         long_scenes = self.script_to_scenes(script, seconds_per_scene=long_seconds_per_scene)
         short_scenes = self.script_to_scenes(script, seconds_per_scene=short_seconds_per_scene)
 
-        long_path = self.build_video_from_scenes(long_scenes, narration_audio, "long_form.mp4")
-        short_path = self.build_video_from_scenes(short_scenes, narration_audio, "short_form.mp4")
+        # IMPORTANT: Do not overwrite the same output files on each run.
+        # Use a stable prefix (content_id) plus a random run id so each generation produces new files.
+        run_id = uuid.uuid4().hex[:10]
+        prefix = (output_prefix or "video").strip().replace(" ", "_")
+
+        long_name = f"{prefix}_{run_id}_long.mp4"
+        short_name = f"{prefix}_{run_id}_short.mp4"
+
+        long_path = self.build_video_from_scenes(long_scenes, narration_audio, long_name)
+        short_path = self.build_video_from_scenes(short_scenes, narration_audio, short_name)
         return {"long": long_path, "short": short_path}
 
 
