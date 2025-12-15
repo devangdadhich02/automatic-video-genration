@@ -13,6 +13,9 @@
       <header>
         <h1>Video Automation Control Panel</h1>
         <p>Manage customers, payments and trigger 1-hour video automations.</p>
+        <div class="row3" style="max-width: 420px;">
+          <button id="reset-saved-state" class="btn-secondary">Reset saved state (fresh start)</button>
+        </div>
       </header>
 
       <main>
@@ -56,6 +59,16 @@
               </div>
               <button id="generate-script">Generate script</button>
               <pre id="script-result"></pre>
+              <textarea id="legacy-script-text" placeholder="Generated script will appear here (editable)."></textarea>
+              <div class="row3">
+                <button id="legacy-save-to-studio">Save to Script Studio</button>
+                <button id="legacy-video">Generate video from this script</button>
+              </div>
+              <div class="row3">
+                <button id="legacy-export-txt">Export TXT</button>
+                <button id="legacy-export-docx">Export DOCX</button>
+                <button id="legacy-export-pdf">Export PDF</button>
+              </div>
               <p class="hint">Works in Guest Mode (Supabase not required).</p>
             </div>
 

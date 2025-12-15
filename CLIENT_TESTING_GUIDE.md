@@ -134,9 +134,57 @@ Expected:
 - Export files saved in `backend/outputs/exports/`
 - Export metadata is appended into `assets_json` (derivative of `content_id` only).
 
+### 2.5 Legacy "Generate Script" Panel (Alternative Workflow)
+
+The dashboard also includes a **"Generate Script"** panel for a simpler, legacy workflow:
+
+#### 2.5.1 Generate Script from Outline
+
+In the **"Generate Script"** card:
+- Enter a **Video outline** (e.g., "1h trading strategy breakdown")
+- Set **Language** (e.g., "English", "Hindi", "Chinese")
+- Set **Target minutes** (default: 60)
+- Click **"Generate script"**
+
+Expected:
+- Script appears in the text area below (editable)
+- You can edit the script before proceeding
+
+#### 2.5.2 Generate Video from Script
+
+After generating or editing a script in the **"Generate Script"** panel:
+
+**Option 1: Using "Generate video from this script" button**
+- Click **"Generate video from this script"** button
+- This now triggers the **same video pipeline** as the "Trigger Video Pipeline" button
+- Progress and results appear in the **"Trigger Video Pipeline (Legacy)"** result area
+- If a webhook URL is provided in the pipeline panel, it will be called automatically
+
+**Option 2: Using "Trigger Video Pipeline" button**
+- Enter the outline in the **"Trigger Video Pipeline (Legacy)"** panel
+- (Optional) Add a **PowerAutomate webhook URL** for notifications
+- Click **"Run pipeline"**
+- This runs: outline → script → video → webhook (if provided)
+
+**Note:** Both buttons now use the same video generation pipeline. The "Generate video from this script" button is convenient when you've already generated/edited a script and want to create a video directly.
+
+#### 2.5.3 Save Script to Script Studio
+
+- Click **"Save to Script Studio"** to save the legacy script to the v2 system
+- This creates a `content_id` and allows you to use all v2 features (export, advanced generation, etc.)
+
+#### 2.5.4 Export from Legacy Script
+
+You can export the script directly:
+- **Export TXT** - Plain text file
+- **Export DOCX** - Microsoft Word document
+- **Export PDF** - PDF document
+
+These exports use the v2 pipeline internally (script is saved to Script Studio automatically if needed).
+
 ---
 
-## 3) TRAINING PHASE (client tests “ingredients for writing”)
+## 3) TRAINING PHASE (client tests "ingredients for writing")
 
 Goal: Store **story types, step prompts, examples, channel DNA** (rules/ingredients) so future generations become consistent.
 
@@ -186,5 +234,20 @@ When you run TRAINING classify:
 ### 4.4 PDF extraction returns empty
 - Scanned PDFs need OCR (not included by default).
 - Try a text-based PDF first.
+
+### 4.5 Video generation not starting
+- Ensure you have a script in either:
+  - The "Generate Script" panel text area, OR
+  - The "Script Studio (v2): Output" editor
+- Both "Generate video from this script" and "Trigger Video Pipeline" buttons now use the same pipeline
+- Check the "Trigger Video Pipeline (Legacy)" result area for progress and status
+- Video files are saved in `backend/outputs/` directory
+
+### 4.6 Webhook notifications not working
+- Webhook URL is optional but must be a valid HTTP/HTTPS endpoint
+- The webhook is called automatically when:
+  - Using "Trigger Video Pipeline" button with an outline, OR
+  - Using "Generate video from this script" button (if webhook URL is provided)
+- Check browser console or backend logs for webhook errors
 
 

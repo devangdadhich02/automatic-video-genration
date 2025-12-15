@@ -1,5 +1,6 @@
 (function () {
-  const STORAGE_KEY = 'video_automation_v2_state';
+  // Versioned key so old saved UI state doesn't appear after updates.
+  const STORAGE_KEY = 'video_automation_v2_state_v2';
 
   function saveUiState(partial) {
     try {
@@ -42,6 +43,7 @@
     : null;
 
   const emailInput = document.getElementById('email');
+  const resetSavedStateBtn = document.getElementById('reset-saved-state');
   const loginBtn = document.getElementById('login-btn');
   const authStatus = document.getElementById('auth-status');
   const dashboard = document.getElementById('dashboard');
@@ -63,6 +65,12 @@
   const generateScriptBtn = document.getElementById('generate-script');
   const triggerPipelineBtn = document.getElementById('trigger-pipeline');
   const scriptResult = document.getElementById('script-result');
+  const legacyScriptText = document.getElementById('legacy-script-text');
+  const legacySaveToStudioBtn = document.getElementById('legacy-save-to-studio');
+  const legacyVideoBtn = document.getElementById('legacy-video');
+  const legacyExportTxtBtn = document.getElementById('legacy-export-txt');
+  const legacyExportDocxBtn = document.getElementById('legacy-export-docx');
+  const legacyExportPdfBtn = document.getElementById('legacy-export-pdf');
   const pipelineResult = document.getElementById('pipeline-result');
 
   // Long-form system (v2)
@@ -256,6 +264,7 @@
     if (languageInput && s.legacy_language) languageInput.value = s.legacy_language;
     if (targetMinutesInput && s.legacy_target_minutes) targetMinutesInput.value = s.legacy_target_minutes;
     if (snsWebhookInput && s.legacy_webhook) snsWebhookInput.value = s.legacy_webhook;
+    if (legacyScriptText && s.legacy_script_text) legacyScriptText.value = s.legacy_script_text;
 
     // Script Studio inputs
     if (useCaseSelect && s.use_case) useCaseSelect.value = s.use_case;
@@ -820,7 +829,7 @@
 
     // If no outline provided, but we have an edited script, generate video from that script (v2).
     if (!outline && cid && editorText) {
-      pipelineResult.textContent = 'Starting video job from Script Studio text...';
+      pipelineResult.textContent = 'Starting video generation from Script Studio text…';
       try {
         const start = await fetchJson(`${BACKEND_BASE}/v2/contents/${cid}/video/async`, {
           method: 'POST',
@@ -836,11 +845,12 @@
         const final = await pollJob(jobId, {
           onTick: (j) => {
             const p = j.progress || {};
-            pipelineResult.textContent = `Generating video... (${p.phase || j.status || 'running'})\njob: ${jobId}`;
+            pipelineResult.textContent = `Generating video… (${p.phase || j.status || 'running'})`;
           }
         });
         if (final.status === 'completed') {
-          pipelineResult.textContent = JSON.stringify(final.result, null, 2);
+          const vids = final.result?.videos || final.result?.result?.videos || final.result?.result || final.result;
+          pipelineResult.textContent = `Video done ✅\n${JSON.stringify(vids, null, 2)}`;
           await loadContent(cid);
           saveUiState({ video_job_id: null, video_job_status: null });
           return;
@@ -859,7 +869,7 @@
       return;
     }
     const webhookUrl = snsWebhookInput.value.trim() || null;
-    pipelineResult.textContent = 'Starting pipeline job...';
+    pipelineResult.textContent = 'Starting pipeline…';
     try {
       const startRes = await fetch(`${BACKEND_BASE}/pipeline/full/async`, {
         method: 'POST',
@@ -879,8 +889,8 @@
         pipelineResult.textContent = 'Failed to start pipeline: ' + JSON.stringify(startJson, null, 2);
         return;
       }
-
-      pipelineResult.textContent = `Running... (job: ${jobId})`;
+      saveUiState({ legacy_pipeline_job_id: jobId, legacy_pipeline_job_status: 'running' });
+      pipelineResult.textContent = `Running…`;
 
       const deadline = Date.now() + 300000; // 5 minutes UI wait
       while (Date.now() < deadline) {
@@ -888,18 +898,26 @@
         const statusRes = await fetch(`${BACKEND_BASE}/pipeline/full/status/${jobId}`);
         const statusJson = await statusRes.json();
         if (statusJson.status === 'completed') {
-          pipelineResult.textContent = JSON.stringify(statusJson.result, null, 2);
+          const result = statusJson.result || {};
+          const script = result.script || '';
+          const videos = result.videos || {};
+          pipelineResult.textContent = `Pipeline done ✅\n\nVideos:\n${JSON.stringify(videos, null, 2)}`;
+          // Show script for editing in legacy area too
+          if (legacyScriptText && script) {
+            legacyScriptText.value = script;
+            saveUiState({ legacy_script_text: script });
+          }
           return;
         }
         if (statusJson.status === 'failed') {
           pipelineResult.textContent = 'Pipeline failed: ' + (statusJson.error || JSON.stringify(statusJson, null, 2));
+          saveUiState({ legacy_pipeline_job_status: 'failed' });
           return;
         }
       }
 
       pipelineResult.textContent =
         'Still running in background.\n' +
-        `Job ID: ${jobId}\n` +
         `Check status: ${BACKEND_BASE}/pipeline/full/status/${jobId}\n`;
     } catch (err) {
       pipelineResult.textContent = 'Error: ' + err.message;
@@ -915,7 +933,7 @@
     const language = (languageInput?.value || 'English').trim() || 'English';
     const targetMinutes = Number(targetMinutesInput?.value || 60);
 
-    scriptResult.textContent = 'Starting job...';
+    scriptResult.textContent = 'Starting…';
     try {
       const startRes = await fetch(`${BACKEND_BASE}/generate/script/async`, {
         method: 'POST',
@@ -936,7 +954,7 @@
       }
       saveUiState({ legacy_script_job_id: jobId, legacy_script_job_status: 'running' });
 
-      scriptResult.textContent = `Generating... (job: ${jobId})`;
+      scriptResult.textContent = `Generating…`;
 
       const deadline = Date.now() + 900000; // 15 minutes max wait in UI
       while (Date.now() < deadline) {
@@ -957,7 +975,12 @@
         }
 
         if (statusJson.status === 'completed') {
-          scriptResult.textContent = statusJson.result?.script || JSON.stringify(statusJson, null, 2);
+          const script = statusJson.result?.script || '';
+          scriptResult.textContent = 'Done ✅';
+          if (legacyScriptText && script) {
+            legacyScriptText.value = script;
+            saveUiState({ legacy_script_text: script });
+          }
           saveUiState({ legacy_script_job_id: null, legacy_script_job_status: null });
           return;
         }
@@ -977,11 +1000,145 @@
     }
   }
 
+  async function ensureStudioForLegacyScript() {
+    const script = (legacyScriptText?.value || '').trim();
+    if (!script) {
+      alert('No script to save. Generate a script first.');
+      return;
+    }
+
+    // Reuse an existing hidden studio content_id for legacy exports if available.
+    const s = loadUiState();
+    let cid = (s.legacy_studio_content_id || '').trim();
+    if (!cid) {
+      // Create a hidden content_id in Script Studio and store the script there so exports/video use the v2 pipeline.
+      cid = await createRawOnly();
+      saveUiState({ legacy_studio_content_id: cid });
+    }
+
+    currentContentId = cid;
+    // Keep content_id hidden (user doesn't need it)
+    if (contentIdInput) {
+      contentIdInput.value = cid;
+      setHidden(contentIdInput, true);
+    }
+    if (scriptEditor) scriptEditor.value = script;
+    const saved = await fetchJson(`${BACKEND_BASE}/v2/contents/${cid}/final`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ final_output: script })
+    });
+    saveUiState({ current_content_id: cid, script_editor: script, legacy_script_text: script });
+    if (!saved.ok) {
+      throw new Error(JSON.stringify(saved.json));
+    }
+    setActionStatus('Saved to Script Studio ✅. Now use Export / Generate video.');
+    return cid;
+  }
+
+  async function videoFromLegacyScript() {
+    const script = (legacyScriptText?.value || '').trim();
+    if (!script) {
+      alert('No script available. Generate a script first.');
+      return;
+    }
+    // Ensure script exists in Script Studio content so lineage is preserved
+    if (!currentContentId) await ensureStudioForLegacyScript();
+    
+    // Use the same pipeline flow as triggerPipeline when generating from script
+    const cid = (contentIdInput?.value || currentContentId || '').trim();
+    if (!cid) {
+      pipelineResult.textContent = 'Error: content_id not available. Please save script to Script Studio first.';
+      return;
+    }
+    
+    pipelineResult.textContent = 'Starting video generation from script…';
+    try {
+      const webhookUrl = snsWebhookInput?.value?.trim() || null;
+      const start = await fetchJson(`${BACKEND_BASE}/v2/contents/${cid}/video/async`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ script })
+      });
+      const jobId = start.json?.job_id;
+      if (!jobId) {
+        pipelineResult.textContent = 'Failed to start video job: ' + JSON.stringify(start.json, null, 2);
+        return;
+      }
+      saveUiState({ video_job_id: jobId, video_job_status: 'running' });
+      const final = await pollJob(jobId, {
+        onTick: (j) => {
+          const p = j.progress || {};
+          pipelineResult.textContent = `Generating video… (${p.phase || j.status || 'running'})`;
+        }
+      });
+      if (final.status === 'completed') {
+        const vids = final.result?.videos || final.result?.result?.videos || final.result?.result || final.result;
+        pipelineResult.textContent = `Video done ✅\n${JSON.stringify(vids, null, 2)}`;
+        
+        // If webhook URL is provided, send notification (similar to pipeline flow)
+        if (webhookUrl) {
+          try {
+            const payload = {
+              title: (script.substring(0, 120) || 'Video Generated'),
+              text: script.substring(0, 1500),
+              long_video_url: vids?.long || vids?.long_path || null,
+              short_video_url: vids?.short || vids?.short_path || null,
+              tags: ['auto']
+            };
+            await fetch(webhookUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(payload)
+            });
+            pipelineResult.textContent += '\n\nWebhook notification sent ✅';
+          } catch (webhookErr) {
+            pipelineResult.textContent += '\n\nWebhook error: ' + webhookErr.message;
+          }
+        }
+        
+        await loadContent(cid);
+        saveUiState({ video_job_id: null, video_job_status: null });
+        return;
+      }
+      pipelineResult.textContent = 'Video job failed: ' + JSON.stringify(final, null, 2);
+      saveUiState({ video_job_status: 'failed' });
+    } catch (err) {
+      pipelineResult.textContent = 'Error: ' + err.message;
+    }
+  }
+
+  async function exportFromLegacy(format) {
+    try {
+      const cid = await ensureStudioForLegacyScript();
+      if (!cid) return;
+      scriptResult.textContent = `Exporting ${format.toUpperCase()}…`;
+      const { ok, json } = await fetchJson(`${BACKEND_BASE}/v2/contents/${cid}/export`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ formats: [format] })
+      });
+      if (!ok) {
+        scriptResult.textContent = 'Export failed: ' + JSON.stringify(json, null, 2);
+        return;
+      }
+      const paths = (json.exports || []).map((e) => e.path).filter(Boolean);
+      scriptResult.textContent = `Exported ✅\n${paths.join('\n') || JSON.stringify(json, null, 2)}`;
+    } catch (e) {
+      scriptResult.textContent = 'Export error: ' + String(e?.message || e);
+    }
+  }
+
   loginBtn.addEventListener('click', sendMagicLink);
   refreshCustomersBtn.addEventListener('click', loadCustomers);
   createCustomerBtn.addEventListener('click', createCustomer);
   generateScriptBtn.addEventListener('click', generateScript);
   triggerPipelineBtn.addEventListener('click', triggerPipeline);
+  if (legacySaveToStudioBtn) legacySaveToStudioBtn.addEventListener('click', ensureStudioForLegacyScript);
+  if (legacyVideoBtn) legacyVideoBtn.addEventListener('click', videoFromLegacyScript);
+  if (legacyExportTxtBtn) legacyExportTxtBtn.addEventListener('click', () => exportFromLegacy('txt'));
+  if (legacyExportDocxBtn) legacyExportDocxBtn.addEventListener('click', () => exportFromLegacy('docx'));
+  if (legacyExportPdfBtn) legacyExportPdfBtn.addEventListener('click', () => exportFromLegacy('pdf'));
 
   if (generateV2Btn) generateV2Btn.addEventListener('click', generateOneClickV2);
   if (saveScriptBtn) saveScriptBtn.addEventListener('click', saveScript);
@@ -1063,11 +1220,26 @@
   // Resume any in-flight jobs after refresh (so generation doesn't “disappear”).
   resumeInFlightJobs();
 
+  if (resetSavedStateBtn) {
+    resetSavedStateBtn.addEventListener('click', () => {
+      const ok = confirm('Reset saved UI state? This will clear saved inputs/scripts from this browser only.');
+      if (!ok) return;
+      try {
+        // Clear current version + older versions (best-effort)
+        localStorage.removeItem(STORAGE_KEY);
+        localStorage.removeItem('video_automation_v2_state');
+        localStorage.removeItem('video_automation_v2_state_v1');
+      } catch {}
+      location.reload();
+    });
+  }
+
   // Persist legacy inputs so refresh doesn't wipe them.
   wirePersist(outlineInput, 'legacy_outline');
   wirePersist(languageInput, 'legacy_language');
   wirePersist(targetMinutesInput, 'legacy_target_minutes');
   wirePersist(snsWebhookInput, 'legacy_webhook');
+  wirePersist(legacyScriptText, 'legacy_script_text');
   wirePersist(useCaseSelect, 'use_case', { event: 'change' });
   wirePersist(rawDomainInput, 'raw_domain');
   wirePersist(rawTopicInput, 'raw_topic');
