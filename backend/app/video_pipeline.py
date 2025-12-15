@@ -37,9 +37,12 @@ class VideoPipeline:
         paragraphs = [p.strip() for p in script.split("\n") if p.strip()]
         scenes: List[Scene] = []
         for p in paragraphs:
-            # Simple heuristic: first few words become the search keyword
-            keyword = " ".join(p.split()[:5])
-            image_paths = self.broll.fetch_broll(keyword, max_items=3)
+            # Simple heuristic: first few words become the search keyword.
+            # Use a slightly longer phrase for richer B-roll matches.
+            keyword = " ".join(p.split()[:10])
+            # Fetch a few images so scenes feel visually alive; pipeline
+            # still works without keys thanks to placeholder generation.
+            image_paths = self.broll.fetch_broll(keyword, max_items=4)
             # If no B-roll available (missing keys, rate-limits), create a local placeholder image
             if not image_paths:
                 image_paths = [self._create_placeholder_image(p)]
@@ -48,7 +51,14 @@ class VideoPipeline:
 
     def _create_placeholder_image(self, text: str) -> str:
         """Create a simple placeholder image so pipeline works without Pixabay/Pexels keys."""
-        from PIL import Image, ImageDraw, ImageFont
+        try:
+            from PIL import Image, ImageDraw, ImageFont
+        except Exception as exc:  # pragma: no cover - environment-specific
+            # If Pillow is not installed, surface a clear, actionable error.
+            raise RuntimeError(
+                "placeholder_image_failed: Pillow (PIL) is not installed in the backend environment. "
+                "Install it with: pip install pillow"
+            ) from exc
 
         w, h = 1280, 720
         img = Image.new("RGB", (w, h), color=(10, 20, 40))
@@ -120,6 +130,9 @@ class VideoPipeline:
             if not scene.image_paths:
                 continue
             for img in scene.image_paths:
+                # Keep API compatible across MoviePy versions – some builds don't
+                # expose `.resize` on ImageClip. We care more about robustness
+                # than enforcing a fixed height here.
                 clip = ImageClip(img)
                 # MoviePy v1: set_duration(); MoviePy v2: with_duration()
                 if hasattr(clip, "set_duration"):
@@ -139,12 +152,18 @@ class VideoPipeline:
         final_path = str(self.output_dir / output_name)
 
         # If we don't need to merge narration audio, write directly to final_path
+        common_kwargs = {
+            "fps": 25,
+            "codec": "libx264",
+            "audio_codec": "aac",
+            "bitrate": "4500k",
+        }
         if audio_path:
             temp_path = str(self.output_dir / f"temp_{output_name}")
-            video_clip.write_videofile(temp_path, fps=24)
+            video_clip.write_videofile(temp_path, **common_kwargs)
         else:
             temp_path = final_path
-            video_clip.write_videofile(final_path, fps=24)
+            video_clip.write_videofile(final_path, **common_kwargs)
         video_clip.close()
 
         if audio_path:
@@ -179,9 +198,17 @@ class VideoPipeline:
         """Generate both long-form (e.g. ~1hr) and short-form versions.
 
         To reach ~1hr, adjust `long_seconds_per_scene` and script length.
+
+        Performance note:
+        - We compute B-roll once and reuse it for both long + short cuts so that
+          video generation stays fast enough for interactive use.
         """
-        long_scenes = self.script_to_scenes(script, seconds_per_scene=long_seconds_per_scene)
-        short_scenes = self.script_to_scenes(script, seconds_per_scene=short_seconds_per_scene)
+        base_scenes = self.script_to_scenes(script, seconds_per_scene=long_seconds_per_scene)
+        long_scenes = base_scenes
+        short_scenes: List[Scene] = [
+            Scene(text=s.text, image_paths=s.image_paths, duration=short_seconds_per_scene)
+            for s in base_scenes
+        ]
 
         # IMPORTANT: Do not overwrite the same output files on each run.
         # Use a stable prefix (content_id) plus a random run id so each generation produces new files.

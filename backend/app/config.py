@@ -72,6 +72,12 @@ class Settings:
     # Exports
     EXPORTS_DIR: str = os.path.join(OUTPUT_DIR, "exports")
 
+    # Training behaviour (MVP: manual-first, no auto-learning required)
+    # If disabled (default), Training classify will NOT auto-extract/overwrite channel DNA.
+    # This keeps the Training phase as a static template-definition layer for MVP,
+    # while preserving the option to turn on extra intelligence later.
+    TRAINING_AUTO_DNA_ENABLED: bool = os.getenv("TRAINING_AUTO_DNA_ENABLED", "0").strip() not in {"", "0", "false", "False"}
+
 
 settings = Settings()
 

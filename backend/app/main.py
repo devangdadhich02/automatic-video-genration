@@ -3,6 +3,7 @@ import asyncio
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .config import settings
@@ -26,6 +27,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Serve generated video files (and other outputs) so the web UI can preview them.
+# Only exposes the OUTPUT_DIR under the `/outputs` path.
+app.mount("/outputs", StaticFiles(directory=settings.OUTPUT_DIR), name="outputs")
 
 app.include_router(pipeline_v2_router)
 

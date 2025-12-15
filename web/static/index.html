@@ -32,178 +32,205 @@
           <h2>Dashboard</h2>
           <p id="user-info"></p>
 
-          <div class="grid">
-            <div class="card" id="customers-card">
-              <h3>Customers</h3>
-              <button id="refresh-customers">Refresh</button>
-              <ul id="customers-list"></ul>
-            </div>
+          <nav class="tab-nav">
+            <button type="button" data-tab-target="tab-script" class="active">Script Studio</button>
+            <button type="button" data-tab-target="tab-legacy">Legacy Workflow</button>
+            <button type="button" data-tab-target="tab-training">Training DB</button>
+            <button type="button" data-tab-target="tab-admin">Customers</button>
+          </nav>
 
-            <div class="card" id="create-customer-card">
-              <h3>Create Customer</h3>
-              <input id="cust-name" placeholder="Name" />
-              <input id="cust-email" placeholder="Email" />
-              <button id="create-customer">Create</button>
-              <p class="hint">Customers are stored in Supabase `customers` table.</p>
-            </div>
-
-            <div class="card">
-              <h3>Generate Script</h3>
-              <textarea
-                id="outline"
-                placeholder="Video outline (e.g. 1h trading strategy breakdown)"
-              ></textarea>
-              <div class="row">
-                <input id="language" placeholder="Language (e.g. English, Hindi, Chinese)" />
-                <input id="target-minutes" type="number" min="5" value="60" />
-              </div>
-              <button id="generate-script">Generate script</button>
-              <pre id="script-result"></pre>
-              <textarea id="legacy-script-text" placeholder="Generated script will appear here (editable)."></textarea>
-              <div class="row3">
-                <button id="legacy-save-to-studio">Save to Script Studio</button>
-                <button id="legacy-video">Generate video from this script</button>
-              </div>
-              <div class="row3">
-                <button id="legacy-export-txt">Export TXT</button>
-                <button id="legacy-export-docx">Export DOCX</button>
-                <button id="legacy-export-pdf">Export PDF</button>
-              </div>
-              <p class="hint">Works in Guest Mode (Supabase not required).</p>
-            </div>
-
-            <div class="card">
-              <h3>Trigger Video Pipeline (Legacy)</h3>
-              <input
-                id="sns-webhook-url"
-                placeholder="PowerAutomate webhook URL (optional)"
-              />
-              <button id="trigger-pipeline">Run pipeline</button>
-              <pre id="pipeline-result"></pre>
-              <p class="hint">
-                Legacy flow = outline → script → video. If outline is empty but you already generated/edited a script in Script Studio, this button will generate video from that script.
-              </p>
-            </div>
-
-            <div class="card">
-              <h3>Script Studio (v2): Inputs</h3>
-              <select id="use-case">
-                <option value="GENERATION">GENERATION</option>
-                <option value="TRAINING">TRAINING</option>
-              </select>
-              <input id="raw-domain" placeholder="domain (e.g. stocks, history)" />
-              <input id="raw-topic" placeholder="topic (optional)" />
-              <input id="raw-sub-topic" placeholder="sub_topic (optional)" />
-              <input id="raw-channel" placeholder="channel (optional)" />
-              <textarea id="raw-text" placeholder="Long original text (optional, up to 30,000+ chars)"></textarea>
-              <input id="raw-pdf" type="file" accept="application/pdf" />
-              <input id="raw-web-url" placeholder="Web URL (optional)" />
-              <input id="raw-youtube-url" placeholder="YouTube URL (optional)" />
-              <input id="raw-channel-link" placeholder="YouTube channel link (optional)" />
-              <button id="generate-v2">Generate script (one click)</button>
-              <pre id="v2-progress"></pre>
-              <p class="hint">No manual content_id needed. The system creates it internally and shows it only after the script is ready.</p>
-            </div>
-
-            <div class="card">
-              <h3>Script Studio (v2): Output</h3>
-              <input id="content-id" placeholder="content_id (shown after output is ready)" class="hidden" />
-              <textarea id="script-editor" placeholder="Your script will appear here. You can edit it, or paste your own script."></textarea>
-              <div class="row3">
-                <button id="save-script">Save script</button>
-                <button id="export-docx">Export DOCX</button>
-                <button id="export-pdf">Export PDF</button>
-              </div>
-              <div class="row3">
-                <button id="export-txt">Export TXT</button>
-                <button id="generate-video">Generate video</button>
-                <button id="refresh-current">Refresh</button>
-              </div>
-              <div class="row3">
-                <button id="clear-current" class="btn-secondary">Clear current script</button>
-              </div>
-              <pre id="action-result"></pre>
-              <div class="row">
-                <input id="video-duration" type="number" min="1" placeholder="Video duration (minutes, optional)" />
-                <div class="hint" style="align-self:center">Example: 2 = 2 minutes. If empty, default timing is used.</div>
+          <!-- Script Studio (v2) -->
+          <div id="tab-script" class="tab-panel active">
+            <div class="grid">
+              <div class="card">
+                <h3>Script Studio (v2): Inputs</h3>
+                <select id="use-case">
+                  <option value="GENERATION">GENERATION</option>
+                  <option value="TRAINING">TRAINING</option>
+                </select>
+                <input id="raw-domain" placeholder="domain (e.g. stocks, history)" />
+                <input id="raw-topic" placeholder="topic (optional)" />
+                <input id="raw-sub-topic" placeholder="sub_topic (optional)" />
+                <input id="raw-channel" placeholder="channel (optional)" />
+                <textarea id="raw-text" placeholder="Long original text (optional, up to 30,000+ chars)"></textarea>
+                <input id="raw-pdf" type="file" accept="application/pdf" />
+                <input id="raw-web-url" placeholder="Web URL (optional)" />
+                <input id="raw-youtube-url" placeholder="YouTube URL (optional)" />
+                <input id="raw-channel-link" placeholder="YouTube channel link (optional)" />
+                <button id="generate-v2">Generate script (one click)</button>
+                <pre id="v2-progress"></pre>
+                <p class="hint">No manual content_id needed. The system creates it internally and shows it only after the script is ready.</p>
               </div>
 
-              <details>
-                <summary>Generation options</summary>
-                <input id="gen-story-type" placeholder="story_type (optional, else auto)" />
-                <input id="gen-provider" placeholder="ai_provider (openai/openrouter/gpt/claude/gemini)" />
-                <input id="gen-model" placeholder="ai_model (e.g. gpt-4o-mini or openrouter model)" />
-                <input id="gen-prompt-version" placeholder="prompt_version (optional)" />
-                <div class="row">
-                  <input id="gen-total-chars" type="number" min="100" value="30000" />
-                  <input id="gen-steps" type="number" min="5" max="20" placeholder="steps (optional)" />
-                </div>
-              </details>
-
-              <details>
-                <summary>Config (stored in config_json column)</summary>
-                <textarea
-                  id="content-config"
-                  placeholder='JSON config. Example: {"retry_count":2,"max_tokens_per_step":2500,"mark_key_terms":true}'
-                ></textarea>
+              <div class="card">
+                <h3>Script Studio (v2): Output</h3>
+                <input id="content-id" placeholder="content_id (shown after output is ready)" class="hidden" />
+                <textarea id="script-editor" placeholder="Your script will appear here. You can edit it, or paste your own script."></textarea>
                 <div class="row3">
-                  <button id="save-config">Save config</button>
-                  <button id="advanced-create-raw">Advanced: Create RAW only</button>
-                  <button id="advanced-run-generate">Advanced: Generate for existing content_id</button>
+                  <button id="save-script">Save script</button>
+                  <button id="export-docx">Export DOCX</button>
+                  <button id="export-pdf">Export PDF</button>
                 </div>
-                <pre id="config-result"></pre>
-              </details>
+                <div class="row3">
+                  <button id="export-txt">Export TXT</button>
+                  <button id="generate-video">Generate video</button>
+                  <button id="refresh-current">Refresh</button>
+                </div>
+                <div class="row3">
+                  <button id="clear-current" class="btn-secondary">Clear current script</button>
+                </div>
+                <pre id="action-result"></pre>
+              <div id="video-preview" class="video-preview"></div>
+                <div class="row">
+                  <input id="video-duration" type="number" min="1" placeholder="Video duration (minutes, optional)" />
+                  <div class="hint" style="align-self:center">Example: 2 = 2 minutes. If empty, default timing is used.</div>
+                </div>
 
-              <details>
-                <summary>Debug (optional)</summary>
-                <pre id="job-result"></pre>
-                <pre id="content-result"></pre>
-                <p class="hint">Debug JSON only. Normal users don’t need this.</p>
-              </details>
-              <p class="hint">Tip: the content_id is created internally and shown only after the script is ready.</p>
+                <details>
+                  <summary>Generation options</summary>
+                  <input id="gen-story-type" placeholder="story_type (optional, else auto)" />
+                  <input id="gen-provider" placeholder="ai_provider (openai/openrouter/gpt/claude/gemini)" />
+                  <input id="gen-model" placeholder="ai_model (e.g. gpt-4o-mini or openrouter model)" />
+                  <input id="gen-prompt-version" placeholder="prompt_version (optional)" />
+                  <div class="row">
+                    <input id="gen-total-chars" type="number" min="100" value="30000" />
+                    <input id="gen-steps" type="number" min="5" max="20" placeholder="steps (optional)" />
+                  </div>
+                </details>
+
+                <details>
+                  <summary>Config (stored in config_json column)</summary>
+                  <textarea
+                    id="content-config"
+                    placeholder='JSON config. Example: {"retry_count":2,"max_tokens_per_step":2500,"mark_key_terms":true}'
+                  ></textarea>
+                  <div class="row3">
+                    <button id="save-config">Save config</button>
+                    <button id="advanced-create-raw">Advanced: Create RAW only</button>
+                    <button id="advanced-run-generate">Advanced: Generate for existing content_id</button>
+                  </div>
+                  <pre id="config-result"></pre>
+                </details>
+
+                <details>
+                  <summary>Debug (optional)</summary>
+                  <pre id="job-result"></pre>
+                  <pre id="content-result"></pre>
+                  <p class="hint">Debug JSON only. Normal users don’t need this.</p>
+                </details>
+                <p class="hint">Tip: the content_id is created internally and shown only after the script is ready.</p>
+              </div>
             </div>
+          </div>
 
-            <div class="card">
-              <h3>Training DB: Story types</h3>
-              <button id="refresh-story-types">Refresh</button>
-              <ul id="story-types-list"></ul>
-              <input id="st-type-id" placeholder="type_id (e.g. Narrative)" />
-              <input id="st-name" placeholder="name" />
-              <textarea id="st-desc" placeholder="description (optional)"></textarea>
-              <textarea id="st-structure" placeholder='structure JSON (optional)'></textarea>
-              <textarea id="st-rules" placeholder='rules JSON (optional)'></textarea>
-              <button id="save-story-type">Save story type</button>
-              <pre id="story-type-result"></pre>
+          <!-- Legacy workflow: outline → script → video -->
+          <div id="tab-legacy" class="tab-panel">
+            <div class="grid">
+              <div class="card">
+                <h3>Generate Script (legacy)</h3>
+                <textarea
+                  id="outline"
+                  placeholder="Video outline (e.g. 1h trading strategy breakdown)"
+                ></textarea>
+                <div class="row">
+                  <input id="language" placeholder="Language (e.g. English, Hindi, Chinese)" />
+                  <input id="target-minutes" type="number" min="5" value="60" />
+                </div>
+                <button id="generate-script">Generate script</button>
+                <pre id="script-result"></pre>
+                <textarea id="legacy-script-text" placeholder="Generated script will appear here (editable)."></textarea>
+                <div class="row3">
+                  <button id="legacy-save-to-studio">Save to Script Studio</button>
+                  <button id="legacy-video">Generate video from this script</button>
+                </div>
+                <div class="row3">
+                  <button id="legacy-export-txt">Export TXT</button>
+                  <button id="legacy-export-docx">Export DOCX</button>
+                  <button id="legacy-export-pdf">Export PDF</button>
+                </div>
+                <p class="hint">Works in Guest Mode (Supabase not required).</p>
+              </div>
+
+              <div class="card">
+                <h3>Trigger Video Pipeline (Legacy)</h3>
+                <input
+                  id="sns-webhook-url"
+                  placeholder="PowerAutomate webhook URL (optional)"
+                />
+                <button id="trigger-pipeline">Run pipeline</button>
+                <pre id="pipeline-result"></pre>
+                <div id="video-preview-legacy" class="video-preview"></div>
+                <p class="hint">
+                  Legacy flow = outline → script → video. If outline is empty but you already generated/edited a script in Script Studio, this button will generate video from that script.
+                </p>
+              </div>
             </div>
+          </div>
 
-            <div class="card">
-              <h3>Training DB: Step prompts</h3>
-              <input id="sp-type-id" placeholder="type_id" />
-              <button id="refresh-step-prompts">Load step prompts</button>
-              <ul id="step-prompts-list"></ul>
-              <input id="sp-prompt-id" placeholder="prompt_id" />
-              <input id="sp-step-index" type="number" min="0" placeholder="step_index (0-based)" />
-              <input id="sp-step-name" placeholder="step_name (optional)" />
-              <input id="sp-objective" placeholder="objective (optional)" />
-              <textarea id="sp-prompt-text" placeholder="prompt_text"></textarea>
-              <input id="sp-example-ref" placeholder="example_ref (optional)" />
-              <input id="sp-ratio" placeholder="ratio (optional, e.g. 0.1)" />
-              <button id="save-step-prompt">Save step prompt</button>
-              <pre id="step-prompt-result"></pre>
+          <!-- Training DB -->
+          <div id="tab-training" class="tab-panel">
+            <div class="grid">
+              <div class="card">
+                <h3>Training DB: Story types</h3>
+                <button id="refresh-story-types">Refresh</button>
+                <ul id="story-types-list"></ul>
+                <input id="st-type-id" placeholder="type_id (e.g. Narrative)" />
+                <input id="st-name" placeholder="name" />
+                <textarea id="st-desc" placeholder="description (optional)"></textarea>
+                <textarea id="st-structure" placeholder='structure JSON (optional)'></textarea>
+                <textarea id="st-rules" placeholder='rules JSON (optional)'></textarea>
+                <button id="save-story-type">Save story type</button>
+                <pre id="story-type-result"></pre>
+              </div>
+
+              <div class="card">
+                <h3>Training DB: Step prompts</h3>
+                <input id="sp-type-id" placeholder="type_id" />
+                <button id="refresh-step-prompts">Load step prompts</button>
+                <ul id="step-prompts-list"></ul>
+                <input id="sp-prompt-id" placeholder="prompt_id" />
+                <input id="sp-step-index" type="number" min="0" placeholder="step_index (0-based)" />
+                <input id="sp-step-name" placeholder="step_name (optional)" />
+                <input id="sp-objective" placeholder="objective (optional)" />
+                <textarea id="sp-prompt-text" placeholder="prompt_text"></textarea>
+                <input id="sp-example-ref" placeholder="example_ref (optional)" />
+                <input id="sp-ratio" placeholder="ratio (optional, e.g. 0.1)" />
+                <button id="save-step-prompt">Save step prompt</button>
+                <pre id="step-prompt-result"></pre>
+              </div>
+
+              <div class="card">
+                <h3>Training DB: Examples (auto-chunk + RAG ingest)</h3>
+                <button id="refresh-examples">Refresh</button>
+                <ul id="examples-list"></ul>
+                <input id="ex-id" placeholder="example_id" />
+                <input id="ex-type-id" placeholder="type_id (optional)" />
+                <input id="ex-channel" placeholder="channel (optional)" />
+                <input id="ex-title" placeholder="title (optional)" />
+                <input id="ex-source-url" placeholder="source_url (optional)" />
+                <textarea id="ex-raw-text" placeholder="example raw_text"></textarea>
+                <button id="save-example">Save example</button>
+                <pre id="example-result"></pre>
+              </div>
             </div>
+          </div>
 
-            <div class="card">
-              <h3>Training DB: Examples (auto-chunk + RAG ingest)</h3>
-              <button id="refresh-examples">Refresh</button>
-              <ul id="examples-list"></ul>
-              <input id="ex-id" placeholder="example_id" />
-              <input id="ex-type-id" placeholder="type_id (optional)" />
-              <input id="ex-channel" placeholder="channel (optional)" />
-              <input id="ex-title" placeholder="title (optional)" />
-              <input id="ex-source-url" placeholder="source_url (optional)" />
-              <textarea id="ex-raw-text" placeholder="example raw_text"></textarea>
-              <button id="save-example">Save example</button>
-              <pre id="example-result"></pre>
+          <!-- Customers / admin -->
+          <div id="tab-admin" class="tab-panel">
+            <div class="grid">
+              <div class="card" id="customers-card">
+                <h3>Customers</h3>
+                <button id="refresh-customers">Refresh</button>
+                <ul id="customers-list"></ul>
+              </div>
+
+              <div class="card" id="create-customer-card">
+                <h3>Create Customer</h3>
+                <input id="cust-name" placeholder="Name" />
+                <input id="cust-email" placeholder="Email" />
+                <button id="create-customer">Create</button>
+                <p class="hint">Customers are stored in Supabase `customers` table.</p>
+              </div>
             </div>
           </div>
         </section>

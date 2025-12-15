@@ -18,6 +18,7 @@ from .rag import rag_service
 from .script_jobs import create_job, get_job, update_job
 from .sheets_store import upsert_content_row, upsert_training_record
 from .video_pipeline import video_pipeline
+from .config import settings
 from .storage import (
     create_content,
     get_channel_dna,
@@ -522,6 +523,9 @@ def api_create_or_update_raw(req: RawInputRequest):
         "web_url": req.web_url,
         "youtube_url": req.youtube_url,
         "channel_link": req.channel_link,
+        # Metadata columns (single main table). For MVP we treat `channel` as the
+        # primary selector and keep `domain` stable once set so operators can
+        # rely on a fixed channel → domain pairing.
         "domain": req.domain,
         "topic": req.topic,
         "sub_topic": req.sub_topic,
@@ -532,7 +536,26 @@ def api_create_or_update_raw(req: RawInputRequest):
         existing = get_content(req.content_id)
         if not existing:
             raise HTTPException(status_code=404, detail="content_id_not_found")
-        update_content(req.content_id, {"use_case": use_case, "status": "RAW", **fields})
+
+        # Channel/domain locking for existing rows:
+        # - Once a channel is set, we keep it fixed via this endpoint (UI can still
+        #   correct data by other means if absolutely needed).
+        # - Domain is also treated as locked once present, so downstream sheets/analytics
+        #   see a stable mapping per content_id.
+        locked_fields: Dict[str, Any] = dict(fields)
+        if existing.get("channel"):
+            locked_fields["channel"] = existing.get("channel")
+        if existing.get("domain"):
+            locked_fields["domain"] = existing.get("domain")
+
+        update_content(
+            req.content_id,
+            {
+                "use_case": use_case,
+                "status": "RAW",
+                **locked_fields,
+            },
+        )
         _sync_sheet(req.content_id)
         return {"content_id": req.content_id, "status": "RAW"}
 
@@ -662,8 +685,10 @@ async def api_classify_async(content_id: str, req: ClassifyRequest):
                 },
             )
 
-            # Channel DNA extraction + version increment (TRAINING phase only)
-            if (c.get("use_case") or "").upper() == "TRAINING":
+            # Channel DNA extraction + version increment (TRAINING phase only, and optional).
+            # For MVP, Training is manual-first and does NOT require any automatic learning.
+            # This block only runs when TRAINING_AUTO_DNA_ENABLED is true.
+            if settings.TRAINING_AUTO_DNA_ENABLED and (c.get("use_case") or "").upper() == "TRAINING":
                 dna = _extract_channel_dna(cleaned)
                 version = int(c.get("version") or 1) + 1
                 update_content(content_id, {"channel_dna_json": dna, "version": version})

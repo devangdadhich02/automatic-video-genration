@@ -147,6 +147,9 @@
   const saveExampleBtn = document.getElementById('save-example');
   const exampleResult = document.getElementById('example-result');
 
+  const videoPreview = document.getElementById('video-preview');
+  const videoPreviewLegacy = document.getElementById('video-preview-legacy');
+
   const BACKEND_BASE = window.BACKEND_BASE || 'http://localhost:8000';
 
   async function fetchJson(url, options) {
@@ -157,6 +160,29 @@
     } catch {
       return { ok: res.ok, status: res.status, json: { raw: text } };
     }
+  }
+
+  function pathToOutputUrl(p) {
+    if (!p || typeof p !== 'string') return null;
+    const parts = p.split(/[\\/]/);
+    const name = parts[parts.length - 1];
+    if (!name) return null;
+    return `${BACKEND_BASE}/outputs/${encodeURIComponent(name)}`;
+  }
+
+  function renderVideoPreview(container, videos) {
+    if (!container) return;
+    container.innerHTML = '';
+    if (!videos) return;
+    const longUrl = pathToOutputUrl(videos.long || videos.long_path);
+    const shortUrl = pathToOutputUrl(videos.short || videos.short_path);
+    const url = longUrl || shortUrl;
+    if (!url) return;
+    const label = longUrl && shortUrl ? 'Long version preview' : 'Video preview';
+    container.innerHTML = `
+      <div class="hint">${label}</div>
+      <video controls src="${url}" preload="metadata"></video>
+    `;
   }
 
   async function pollJob(jobId, { onTick } = {}) {
@@ -342,10 +368,18 @@
     if (!jobResult) return;
     const p = j.progress || {};
     const phase = p.phase || j.status || 'running';
-    if (phase === 'video') jobResult.textContent = 'Generating video…';
-    else if (phase === 'done' || j.status === 'completed') jobResult.textContent = 'Video done.';
-    else if (j.status === 'failed') jobResult.textContent = 'Video failed.';
-    else jobResult.textContent = 'Generating video…';
+    if (phase === 'video') {
+      jobResult.textContent = 'Generating video…';
+      setActionStatus('Rendering video scenes…');
+    } else if (phase === 'done' || j.status === 'completed') {
+      jobResult.textContent = 'Video done.';
+    } else if (j.status === 'failed') {
+      jobResult.textContent = 'Video failed.';
+      setActionStatus('Video failed. Open Debug for details.');
+    } else {
+      jobResult.textContent = 'Generating video…';
+      setActionStatus('Generating video…');
+    }
   }
 
   async function resumeInFlightJobs() {
@@ -474,6 +508,24 @@
     setButtonsDisabled(true);
 
     const useCase = (useCaseSelect?.value || 'GENERATION').trim().toUpperCase();
+
+    // Enforce that a channel is selected first – this keeps `content_id` rows
+    // anchored to a channel_id, and allows domain/story_type logic to stay stable.
+    const channelVal = rawChannelInput?.value?.trim() || '';
+    if (!channelVal) {
+      v2Progress.textContent = 'Please select / enter a channel first. Channel is required before creating input.';
+      setButtonsDisabled(false);
+      return;
+    }
+
+    // Lightweight domain auto-fill: if domain is empty, mirror channel into domain
+    // and keep the input visually read-only so operators treat it as locked.
+    if (rawDomainInput && !rawDomainInput.value.trim()) {
+      rawDomainInput.value = channelVal;
+    }
+    if (rawDomainInput) {
+      rawDomainInput.readOnly = true;
+    }
     if (useCase !== 'GENERATION') {
       // Training: only create the row; no script generation.
       const cid = await createRawOnly();
@@ -556,31 +608,37 @@
     const targetMinutes = videoDurationInput?.value ? Number(videoDurationInput.value) : null;
     const targetSeconds = targetMinutes ? Math.max(1, Math.floor(targetMinutes * 60)) : null;
     saveUiState({ video_duration: videoDurationInput?.value || '' });
-    setButtonsDisabled(true);
     setActionStatus('Starting video generation… (this can take time)');
     const { json } = await fetchJson(`${BACKEND_BASE}/v2/contents/${cid}/video/async`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ script, target_duration_seconds: targetSeconds })
     });
-    jobResult.textContent = JSON.stringify(json, null, 2);
     if (!json.job_id) return;
     saveUiState({ video_job_id: json.job_id, video_job_status: 'running' });
+    jobResult.textContent = `Video job started. job_id=${json.job_id}`;
     const final = await pollJob(json.job_id, {
       onTick: (j) => {
         renderVideoProgress(j);
-        jobResult.textContent = JSON.stringify(j, null, 2);
       }
     });
-    jobResult.textContent = JSON.stringify(final, null, 2);
     saveUiState({ video_job_id: null, video_job_status: null });
     await loadContent(cid);
     if (final.status === 'completed') {
-      setActionStatus('Video done ✅. Check backend/outputs/ for the mp4 files.');
+      const vids = final.result?.videos || final.result?.result?.videos || final.result?.result || final.result;
+      // Compact, user-friendly summary of output paths
+      jobResult.textContent = JSON.stringify(vids, null, 2);
+      renderVideoPreview(videoPreview, vids);
+      const longPath = vids?.long || vids?.long_path || '';
+      const shortPath = vids?.short || vids?.short_path || '';
+      const lines = ['Video done ✅. Preview below. Files saved in backend/outputs/.'];
+      if (longPath) lines.push(`Long: ${longPath}`);
+      if (shortPath) lines.push(`Short: ${shortPath}`);
+      setActionStatus(lines.join('\n'));
     } else {
-      setActionStatus('Video failed. Open Debug to see details.');
+      const err = final.error || 'Unknown error – open Debug for full JSON.';
+      setActionStatus('Video failed: ' + err);
     }
-    setButtonsDisabled(false);
   }
 
   async function refreshStoryTypes() {
@@ -851,11 +909,13 @@
         if (final.status === 'completed') {
           const vids = final.result?.videos || final.result?.result?.videos || final.result?.result || final.result;
           pipelineResult.textContent = `Video done ✅\n${JSON.stringify(vids, null, 2)}`;
+          renderVideoPreview(videoPreviewLegacy, vids);
           await loadContent(cid);
           saveUiState({ video_job_id: null, video_job_status: null });
           return;
         }
-        pipelineResult.textContent = 'Video job failed: ' + JSON.stringify(final, null, 2);
+        const err = final.error || 'Unknown error – see job JSON.';
+        pipelineResult.textContent = 'Video job failed: ' + err;
         saveUiState({ video_job_status: 'failed' });
       } catch (err) {
         pipelineResult.textContent = 'Error: ' + err.message;
@@ -902,6 +962,7 @@
           const script = result.script || '';
           const videos = result.videos || {};
           pipelineResult.textContent = `Pipeline done ✅\n\nVideos:\n${JSON.stringify(videos, null, 2)}`;
+          renderVideoPreview(videoPreviewLegacy, videos);
           // Show script for editing in legacy area too
           if (legacyScriptText && script) {
             legacyScriptText.value = script;
@@ -910,7 +971,8 @@
           return;
         }
         if (statusJson.status === 'failed') {
-          pipelineResult.textContent = 'Pipeline failed: ' + (statusJson.error || JSON.stringify(statusJson, null, 2));
+          const err = statusJson.error || JSON.stringify(statusJson, null, 2);
+          pipelineResult.textContent = 'Pipeline failed: ' + err;
           saveUiState({ legacy_pipeline_job_status: 'failed' });
           return;
         }
@@ -1075,6 +1137,7 @@
       if (final.status === 'completed') {
         const vids = final.result?.videos || final.result?.result?.videos || final.result?.result || final.result;
         pipelineResult.textContent = `Video done ✅\n${JSON.stringify(vids, null, 2)}`;
+        renderVideoPreview(videoPreviewLegacy, vids);
         
         // If webhook URL is provided, send notification (similar to pipeline flow)
         if (webhookUrl) {
@@ -1101,7 +1164,8 @@
         saveUiState({ video_job_id: null, video_job_status: null });
         return;
       }
-      pipelineResult.textContent = 'Video job failed: ' + JSON.stringify(final, null, 2);
+      const err = final.error || JSON.stringify(final, null, 2);
+      pipelineResult.textContent = 'Video job failed: ' + err;
       saveUiState({ video_job_status: 'failed' });
     } catch (err) {
       pipelineResult.textContent = 'Error: ' + err.message;
@@ -1267,6 +1331,22 @@
     refreshStoryTypes();
     refreshExamples();
   } catch {}
+
+  // Simple tab switching for a cleaner UX
+  const tabButtons = document.querySelectorAll('[data-tab-target]');
+  const tabPanels = document.querySelectorAll('.tab-panel');
+  tabButtons.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const targetId = btn.getAttribute('data-tab-target');
+      tabPanels.forEach((panel) => {
+        panel.classList.toggle('active', panel.id === targetId);
+      });
+      tabButtons.forEach((b) => {
+        if (b === btn) b.classList.add('active');
+        else b.classList.remove('active');
+      });
+    });
+  });
 })();
 
 
